@@ -1,0 +1,19 @@
+{
+    "height": 768,
+    "width": 1024,
+    "board_number_required": 20,
+    "feature_rows": 8,
+    "feature_columns": 11,
+    "row_distance_um": 15000,
+    "column_distance_um": 15000,
+    "focal_length_mm": 22,
+    "pixel_size_um": 10.8,
+    "zero_tangent_dist": true,
+    "fix_sixth_order_dist": false,
+    "fix_aspect_ratio": true,
+    "tilted_model": true,
+    "thin_prism_model": true,
+    "camera_width": 1920,
+    "camera_height": 1080,
+    "projector_mirror_type":"ORTHOGONAL"
+}

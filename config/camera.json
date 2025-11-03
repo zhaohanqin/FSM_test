@@ -1,0 +1,16 @@
+{
+    "height": 1080,
+    "width": 1920,
+    "board_number_required": 20,
+    "feature_rows": 8,
+    "feature_columns": 11,
+    "row_distance_um": 15000,
+    "column_distance_um": 15000,
+    "focal_length_mm": 8,
+    "pixel_size_um": 3.45,
+    "zero_tangent_dist": true,
+    "fix_sixth_order_dist": true,
+    "fix_aspect_ratio": true,
+    "tilted_model": true,
+    "thin_prism_model": true
+}
