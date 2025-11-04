@@ -100,11 +100,29 @@ def decode_fsa_images():
     #   - 速度: 快（约需 1-3 分钟）
     #   - 适用: 内存 ≥ 16GB 的系统
     #
-    LOW_MEMORY_MODE = True  # 🔴 内存不足时必须设为 True
+    LOW_MEMORY_MODE = True  #  内存不足时必须设为 True
     # ====================================================
     
     # 调试参数（可选）
     DEBUG_POINT = (900, 495)  # 查看特定点的解码详情，设为None则不输出
+    
+    # ==================== 频谱分析参数 ====================
+    #  SPECTRUM_POINT: 频谱分析点坐标
+    # 
+    # 用途：指定一个像素点，解码器会保存该点的完整DFT频谱
+    # 格式：(x, y) 或 None
+    # 
+    # 示例：
+    #   SPECTRUM_POINT = (1200, 1000)  # 分析像素(1200, 1000)的频谱
+    #   SPECTRUM_POINT = None          # 不进行频谱分析
+    #
+    # 频谱数据将帮助您理解：
+    #   - DFT变换后的完整频谱分布（1920个值）
+    #   - 所有可能的投影仪列位置（所有峰值）
+    #   - 为什么选择某个特定的列作为对应关系
+    #
+    SPECTRUM_POINT = (1200, 1000)  # 设为None则不进行频谱分析
+    # ====================================================
     
     # ==================================================
     
@@ -138,9 +156,9 @@ def decode_fsa_images():
     
     # ==================== 解码水平方向 ====================
     if DECODE_DIRECTION in ["both", "hor"]:
-        print("\n" + "█"*80)
-        print("█ 解码水平条纹（获取投影仪行坐标 / Y坐标）")
-        print("█"*80)
+        print("\n" + "="*80)
+        print("解码水平条纹（获取投影仪行坐标 / Y坐标）")
+        print("="*80)
     
     if DECODE_DIRECTION in ["both", "hor"] and os.path.exists(IMAGE_DIR_HOR):
         try:
@@ -154,13 +172,14 @@ def decode_fsa_images():
             )
             
             # 执行解码
-            disparity_hor, peak_hor = decoder.decode_direction(
+            disparity_hor, peak_hor, spectrum_hor = decoder.decode_direction(
                 images=images_hor,
                 direction='hor',
                 num_frequencies=NUM_FREQUENCIES,
                 block_size=BLOCK_SIZE,
                 debug_point=DEBUG_POINT,
-                low_memory=LOW_MEMORY_MODE
+                low_memory=LOW_MEMORY_MODE,
+                spectrum_point=SPECTRUM_POINT if DECODE_DIRECTION in ["both", "hor"] else None
             )
             
             # 保存结果
@@ -187,9 +206,9 @@ def decode_fsa_images():
     
     # ==================== 解码垂直方向 ====================
     if DECODE_DIRECTION in ["both", "ver"]:
-        print("\n" + "█"*80)
-        print("█ 解码垂直条纹（获取投影仪列坐标 / X坐标）")
-        print("█"*80)
+        print("\n" + "="*80)
+        print("解码垂直条纹（获取投影仪列坐标 / X坐标）")
+        print("="*80)
     
     if DECODE_DIRECTION in ["both", "ver"] and os.path.exists(IMAGE_DIR_VER):
         try:
@@ -203,13 +222,14 @@ def decode_fsa_images():
             )
             
             # 执行解码
-            disparity_ver, peak_ver = decoder.decode_direction(
+            disparity_ver, peak_ver, spectrum_ver = decoder.decode_direction(
                 images=images_ver,
                 direction='ver',
                 num_frequencies=NUM_FREQUENCIES,
                 block_size=BLOCK_SIZE,
                 debug_point=DEBUG_POINT,
-                low_memory=LOW_MEMORY_MODE
+                low_memory=LOW_MEMORY_MODE,
+                spectrum_point=SPECTRUM_POINT if DECODE_DIRECTION in ["both", "ver"] else None
             )
             
             # 保存结果
@@ -233,6 +253,20 @@ def decode_fsa_images():
         print("跳过垂直方向解码")
     elif DECODE_DIRECTION == "hor":
         print("\n⊙ 根据配置，跳过垂直方向解码（仅解码水平方向）")
+    
+    # ==================== 保存频谱数据 ====================
+    spectrum_data_saved = None
+    if DECODE_DIRECTION in ["both", "hor"] and 'spectrum_hor' in locals() and spectrum_hor is not None:
+        spectrum_data_saved = spectrum_hor
+        spectrum_path = os.path.join(OUTPUT_DIR, "spectrum_hor.npy")
+        np.save(spectrum_path, spectrum_hor)
+        print(f"\n✓ 水平方向频谱数据已保存: {spectrum_path}")
+    
+    if DECODE_DIRECTION in ["both", "ver"] and 'spectrum_ver' in locals() and spectrum_ver is not None:
+        spectrum_data_saved = spectrum_ver
+        spectrum_path = os.path.join(OUTPUT_DIR, "spectrum_ver.npy")
+        np.save(spectrum_path, spectrum_ver)
+        print(f"\n✓ 垂直方向频谱数据已保存: {spectrum_path}")
     
     # ==================== 完成 ====================
     print("\n" + "="*80)
@@ -280,7 +314,171 @@ def decode_fsa_images():
         print("  1. 可视化当前的行坐标结果")
         print("  2. 使用峰值图评估解码质量")
     
-    return OUTPUT_DIR
+    return OUTPUT_DIR, spectrum_data_saved
+
+
+def visualize_spectrum(spectrum_data: dict, save_path: str = None):
+    """
+    可视化频谱数据，展示FSA解码的完整过程
+    
+    Parameters:
+    -----------
+    spectrum_data : dict
+        频谱数据字典（从decode_direction返回）
+    save_path : str, optional
+        保存图像的路径
+    """
+    import matplotlib.pyplot as plt
+    
+    # 设置中文字体
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    print("\n" + "="*80)
+    print("频谱可视化分析")
+    print("="*80)
+    
+    point = spectrum_data['point']
+    direction = spectrum_data['direction']
+    N = spectrum_data['N']
+    M = spectrum_data['num_frequencies']
+    
+    print(f"分析点: ({point[0]}, {point[1]})")
+    print(f"解码方向: {'水平 (投影仪行坐标)' if direction == 'hor' else '垂直 (投影仪列坐标)'}")
+    print(f"频率数量: {M}")
+    print(f"DFT长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
+    print(f"最大峰值位置: {spectrum_data['peak_index']}")
+    print(f"最大峰值强度: {spectrum_data['peak_value']:.4f}")
+    
+    # 创建图形
+    fig = plt.figure(figsize=(18, 12))
+    
+    # 1. 原始强度序列
+    ax1 = plt.subplot(3, 3, 1)
+    ax1.plot(spectrum_data['I0'], 'o-', label='I₀ (0°)', linewidth=1.5, markersize=3)
+    ax1.plot(spectrum_data['I1'], 's-', label='I₁ (90°)', linewidth=1.5, markersize=3)
+    ax1.plot(spectrum_data['I2'], '^-', label='I₂ (180°)', linewidth=1.5, markersize=3)
+    ax1.plot(spectrum_data['I3'], 'd-', label='I₃ (270°)', linewidth=1.5, markersize=3)
+    ax1.set_xlabel('频率索引 k')
+    ax1.set_ylabel('强度值')
+    ax1.set_title(f'1. 原始强度序列\n(M={M}个频率，每个4个相位)')
+    ax1.legend(loc='best')
+    ax1.grid(True, alpha=0.3)
+    
+    # 2. 差分信号
+    ax2 = plt.subplot(3, 3, 2)
+    ax2.plot(spectrum_data['Dc'], 'o-', label='Dc = I₀ - I₂', linewidth=1.5, markersize=3)
+    ax2.plot(spectrum_data['Ds'], 's-', label='Ds = I₃ - I₁', linewidth=1.5, markersize=3)
+    ax2.set_xlabel('频率索引 k')
+    ax2.set_ylabel('差分值')
+    ax2.set_title('2. 差分信号\n(消除直流分量和反射率)')
+    ax2.legend(loc='best')
+    ax2.grid(True, alpha=0.3)
+    
+    # 3. 复数信号的幅值
+    ax3 = plt.subplot(3, 3, 3)
+    D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
+    ax3.plot(D_magnitude, 'o-', color='purple', linewidth=1.5, markersize=3)
+    ax3.set_xlabel('频率索引 k')
+    ax3.set_ylabel('|D| (复数信号幅值)')
+    ax3.set_title('3. 复数信号幅值\nD = Dc + j·Ds')
+    ax3.grid(True, alpha=0.3)
+    
+    # 4. 完整频谱（线性坐标）
+    ax4 = plt.subplot(3, 3, 4)
+    spectrum = spectrum_data['spectrum']
+    frequencies = spectrum_data['frequencies']
+    ax4.plot(frequencies, spectrum, '-', linewidth=1, color='blue', alpha=0.7)
+    ax4.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
+                linewidth=2, label=f"峰值位置={spectrum_data['peak_index']}")
+    ax4.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
+    ax4.set_ylabel('归一化幅值')
+    ax4.set_title(f'4. 完整DFT频谱（线性坐标）\n峰值强度={spectrum_data["peak_value"]:.4f}')
+    ax4.legend(loc='best')
+    ax4.grid(True, alpha=0.3)
+    
+    # 5. 完整频谱（对数坐标）
+    ax5 = plt.subplot(3, 3, 5)
+    spectrum_log = np.log10(spectrum + 1e-10)
+    ax5.plot(frequencies, spectrum_log, '-', linewidth=1, color='green', alpha=0.7)
+    ax5.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
+                linewidth=2, label=f"峰值位置={spectrum_data['peak_index']}")
+    ax5.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
+    ax5.set_ylabel('log₁₀(幅值)')
+    ax5.set_title('5. 完整DFT频谱（对数坐标）\n更清晰地显示次要峰值')
+    ax5.legend(loc='best')
+    ax5.grid(True, alpha=0.3)
+    
+    # 6. 局部放大（峰值附近）
+    ax6 = plt.subplot(3, 3, 6)
+    peak_idx = spectrum_data['peak_index']
+    half_width = 100
+    start = max(0, peak_idx - half_width)
+    end = min(N, peak_idx + half_width)
+    ax6.plot(frequencies[start:end], spectrum[start:end], 'o-', 
+             linewidth=2, markersize=4, color='purple')
+    ax6.axvline(x=peak_idx, color='red', linestyle='--', linewidth=2, 
+                label=f'峰值位置={peak_idx}')
+    ax6.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
+    ax6.set_ylabel('归一化幅值')
+    ax6.set_title(f'6. 峰值附近局部放大\n范围: [{start}, {end}]')
+    ax6.legend(loc='best')
+    ax6.grid(True, alpha=0.3)
+    
+    # 7. 前20个峰值分析
+    ax7 = plt.subplot(3, 3, 7)
+    top20_indices = np.argsort(spectrum)[-20:][::-1]
+    top20_values = spectrum[top20_indices]
+    colors_bar = ['red' if i == 0 else 'orange' if i < 3 else 'blue' for i in range(len(top20_indices))]
+    ax7.bar(range(len(top20_indices)), top20_values, color=colors_bar, edgecolor='black')
+    ax7.set_xlabel('峰值排名')
+    ax7.set_ylabel('归一化幅值')
+    ax7.set_title('7. 前20个峰值强度\n(红色=最大，橙色=次要)')
+    ax7.grid(True, alpha=0.3, axis='y')
+    
+    # 8. 前20个峰值位置
+    ax8 = plt.subplot(3, 3, 8)
+    ax8.bar(range(len(top20_indices)), top20_indices, color=colors_bar, edgecolor='black')
+    ax8.set_xlabel('峰值排名')
+    ax8.set_ylabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
+    ax8.set_title('8. 前20个峰值位置\n(显示所有可能的对应关系)')
+    ax8.grid(True, alpha=0.3, axis='y')
+    
+    # 9. 峰值信息文本
+    ax9 = plt.subplot(3, 3, 9)
+    ax9.axis('off')
+    info_text = f"""
+频谱分析结果总结
+
+像素坐标: ({point[0]}, {point[1]})
+解码方向: {'水平 (行)' if direction == 'hor' else '垂直 (列)'}
+
+频率数量 M: {M}
+DFT长度 N: {N}
+
+最佳匹配:
+  投影仪坐标: {spectrum_data['peak_index']}
+  峰值强度: {spectrum_data['peak_value']:.4f}
+
+前10个峰值:
+"""
+    for i, idx in enumerate(top20_indices[:10]):
+        info_text += f"  #{i+1}: 位置={idx:4d}, 强度={spectrum[idx]:.4f}\n"
+    
+    ax9.text(0.1, 0.9, info_text, transform=ax9.transAxes, 
+             fontsize=10, verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.suptitle(f'FSA频谱分析 - 像素({point[0]}, {point[1]}) - {direction.upper()}方向', 
+                 fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"\n✓ 频谱可视化图像已保存: {save_path}")
+    
+    plt.show()
+    print("="*80)
 
 
 def load_and_inspect_results(result_dir: str):
@@ -337,11 +535,27 @@ def load_and_inspect_results(result_dir: str):
 
 if __name__ == "__main__":
     # 执行解码
-    result_dir = decode_fsa_images()
+    result_dir, spectrum_data = decode_fsa_images()
     
     # 检查结果
     if result_dir and os.path.exists(result_dir):
         load_and_inspect_results(result_dir)
+    
+    # 可视化频谱（如果有频谱数据）
+    if spectrum_data is not None:
+        print("\n" + "="*80)
+        print("开始频谱可视化")
+        print("="*80)
+        
+        # 确定保存路径
+        vis_dir = os.path.join(result_dir, "..", "visualizations") if result_dir else "./results/visualizations"
+        os.makedirs(vis_dir, exist_ok=True)
+        
+        direction = spectrum_data['direction']
+        point = spectrum_data['point']
+        save_path = os.path.join(vis_dir, f'spectrum_{direction}_x{point[0]}_y{point[1]}.png')
+        
+        visualize_spectrum(spectrum_data, save_path=save_path)
     
     print("\n" + "="*80)
     print("程序结束")

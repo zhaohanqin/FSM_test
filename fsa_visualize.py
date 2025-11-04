@@ -61,7 +61,7 @@ class FSAVisualizer:
             else:
                 print(f"  ✗ 未找到 {filename}")
     
-    def visualize_disparity(self, direction='ver', peak_threshold=0.5, save_path=None):
+    def visualize_disparity(self, direction='ver', peak_threshold=1.0, save_path=None):
         """
         可视化视差图
         
