@@ -156,48 +156,53 @@ def generate_fringe_for_frequency(frequency: float, height: int, width: int,
                                      save_1d, save_full, save_full_4phase, P_A, P_B)
         return
     
+    # 统一的文件夹命名（基于垂直方向的 f×ck 值）
+    # 这样可以确保在 both 模式下，垂直和水平条纹保存在同一个文件夹
+    f_ck_value = frequency * width  # 统一使用 width 作为参考
+    folder_name = f"f{f_ck_value:.1f}".replace('.', '_')
+    if f_ck_value == int(f_ck_value):
+        folder_name = f"f{int(f_ck_value)}"
+    
     if direction == 'vertical':
         # 垂直条纹：沿 X 轴变化，ck = width
         ck = width
-        f_ck_value = frequency * ck  # f × ck 值，用于文件命名
-        
-        # 文件夹命名：f0, f0_5, f1, f1_5 等
-        folder_name = f"f{f_ck_value:.1f}".replace('.', '_')
-        if f_ck_value == int(f_ck_value):
-            folder_name = f"f{int(f_ck_value)}"
         
         # 文件名前缀（用于both模式）
         file_prefix = "vertical_"
         
-        # 保存一维数据（1 x width）- 总是生成4个相位到文件夹
+        # 创建子文件夹
         if save_1d:
             dir_1d = os.path.join(output_dir_1d, folder_name)
             os.makedirs(dir_1d, exist_ok=True)
+        if save_full:
+            dir_full = os.path.join(output_dir_full, folder_name)
+            os.makedirs(dir_full, exist_ok=True)
+        
+        # 保存一维数据（1 x width）- 总是生成4个相位
+        if save_1d:
             for i, phase_deg in enumerate(phases):
                 # 按标准四步相移顺序生成：0°, 90°, 180°, 270°
                 pattern_1d = generate_sine_1d(width, frequency, phase_deg, P_A, P_B)
                 img_1d = Image.fromarray(pattern_1d.reshape((1, width)), "L")
-                fname_1d = f"{file_prefix}phase{phase_deg}.bmp"
+                fname_1d = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                 img_1d.save(os.path.join(dir_1d, fname_1d), format="BMP")
         
         # 保存完整图像（height x width）
         if save_full:
-            dir_full = os.path.join(output_dir_full, folder_name)
-            os.makedirs(dir_full, exist_ok=True)
             if save_full_4phase:
-                # 生成4个相位到文件夹，按标准顺序：0°, 90°, 180°, 270°
+                # 生成4个相位，按标准顺序：0°, 90°, 180°, 270°
                 for i, phase_deg in enumerate(phases):
                     pattern_1d = generate_sine_1d(width, frequency, phase_deg, P_A, P_B)
                     full_pattern = np.tile(pattern_1d, (height, 1))
                     img_full = Image.fromarray(full_pattern, "L")
-                    fname_full = f"{file_prefix}phase{phase_deg}.bmp"
+                    fname_full = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                     img_full.save(os.path.join(dir_full, fname_full), format="BMP")
             else:
                 # 只生成0°相位
                 pattern_1d = generate_sine_1d(width, frequency, 0, P_A, P_B)
                 full_pattern = np.tile(pattern_1d, (height, 1))
                 img_full = Image.fromarray(full_pattern, "L")
-                fname_full = f"{file_prefix}phase0.bmp"
+                fname_full = f"{file_prefix}{folder_name}_phase0.bmp"
                 img_full.save(os.path.join(dir_full, fname_full), format="BMP")
         
         # 打印进度信息
@@ -210,50 +215,48 @@ def generate_fringe_for_frequency(frequency: float, height: int, width: int,
                 save_info.append("Full×4")
             else:
                 save_info.append("Full×1")
-        print(f"✅ {folder_name:8s} f={frequency:.6f} (f×ck={f_ck_value:.1f}) | 周期={period_str}px | {'+'.join(save_info) if save_info else '无'}")
+        print(f"✅ {folder_name:8s} [V] f={frequency:.6f} (f×ck={ck * frequency:.1f}) | 周期={period_str}px | {'+'.join(save_info) if save_info else '无'}")
         
     elif direction == 'horizontal':
         # 水平条纹：沿 Y 轴变化，ck = height
         ck = height
-        f_ck_value = frequency * ck  # f × ck 值，用于文件命名
-        
-        # 文件夹命名：f0, f0_5, f1, f1_5 等
-        folder_name = f"f{f_ck_value:.1f}".replace('.', '_')
-        if f_ck_value == int(f_ck_value):
-            folder_name = f"f{int(f_ck_value)}"
         
         # 文件名前缀（用于both模式）
         file_prefix = "horizontal_"
         
-        # 保存一维数据（height x 1）- 总是生成4个相位到文件夹
+        # 创建子文件夹
         if save_1d:
             dir_1d = os.path.join(output_dir_1d, folder_name)
             os.makedirs(dir_1d, exist_ok=True)
+        if save_full:
+            dir_full = os.path.join(output_dir_full, folder_name)
+            os.makedirs(dir_full, exist_ok=True)
+        
+        # 保存一维数据（height x 1）- 总是生成4个相位
+        if save_1d:
             for i, phase_deg in enumerate(phases):
                 # 按标准四步相移顺序生成：0°, 90°, 180°, 270°
                 pattern_1d = generate_sine_1d(height, frequency, phase_deg, P_A, P_B)
                 img_1d = Image.fromarray(pattern_1d.reshape((height, 1)), "L")
-                fname_1d = f"{file_prefix}phase{phase_deg}.bmp"
+                fname_1d = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                 img_1d.save(os.path.join(dir_1d, fname_1d), format="BMP")
         
         # 保存完整图像（height x width）
         if save_full:
-            dir_full = os.path.join(output_dir_full, folder_name)
-            os.makedirs(dir_full, exist_ok=True)
             if save_full_4phase:
-                # 生成4个相位到文件夹，按标准顺序：0°, 90°, 180°, 270°
+                # 生成4个相位，按标准顺序：0°, 90°, 180°, 270°
                 for i, phase_deg in enumerate(phases):
                     pattern_1d = generate_sine_1d(height, frequency, phase_deg, P_A, P_B)
                     full_pattern = np.tile(pattern_1d.reshape((height, 1)), (1, width))
                     img_full = Image.fromarray(full_pattern, "L")
-                    fname_full = f"{file_prefix}phase{phase_deg}.bmp"
+                    fname_full = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                     img_full.save(os.path.join(dir_full, fname_full), format="BMP")
             else:
                 # 只生成0°相位
                 pattern_1d = generate_sine_1d(height, frequency, 0, P_A, P_B)
                 full_pattern = np.tile(pattern_1d.reshape((height, 1)), (1, width))
                 img_full = Image.fromarray(full_pattern, "L")
-                fname_full = f"{file_prefix}phase0.bmp"
+                fname_full = f"{file_prefix}{folder_name}_phase0.bmp"
                 img_full.save(os.path.join(dir_full, fname_full), format="BMP")
         
         # 打印进度信息
@@ -266,7 +269,7 @@ def generate_fringe_for_frequency(frequency: float, height: int, width: int,
                 save_info.append("Full×4")
             else:
                 save_info.append("Full×1")
-        print(f"✅ {folder_name:8s} [{direction[0].upper()}] f={frequency:.6f} (f×ck={f_ck_value:.1f}) | 周期={period_str}px | {'+'.join(save_info) if save_info else '无'}")
+        print(f"✅ {folder_name:8s} [H] f={frequency:.6f} (f×ck={ck * frequency:.1f}) | 周期={period_str}px | {'+'.join(save_info) if save_info else '无'}")
     
     else:
         raise ValueError(f"不支持的方向: {direction}，请选择 'vertical', 'horizontal' 或 'both'")
@@ -279,7 +282,7 @@ if __name__ == "__main__":
     
     # 频率参数
     f_min = 0.00       # 最小空间频率 (cycles/pixel)
-    f_max = 0.02      # 最大空间频率 (cycles/pixel)
+    f_max = 0.20      # 最大空间频率 (cycles/pixel)
     delta_f = 0.00026  # 频率步长
     
     # 投影仪分辨率参数
@@ -297,7 +300,7 @@ if __name__ == "__main__":
     # 输出控制 - 您可以选择生成哪些文件
     # ========================================
     save_1d_data = True          # 是否保存一维数据（总是生成4个相位）
-    save_full_image = True       # 是否保存完整图像（可直接投影）
+    save_full_image = True        # 是否保存完整图像（可直接投影）
     save_full_4phase = True     # 完整图像是否生成4个相位（False则只生成0°）
     
     # 💡 使用建议：
@@ -309,8 +312,8 @@ if __name__ == "__main__":
     # 输出目录
     # 如果是both模式，目录名不包含方向；否则包含方向
     dir_suffix = direction if direction != 'both' else 'both'
-    output_dir_1d = fr"F:\1_images_{dir_suffix}/1d_data"
-    output_dir_full = fr"F:\1_images_{dir_suffix}/full_images"
+    output_dir_1d = fr"E:\1_images_{dir_suffix}/1d_data"
+    output_dir_full = fr"E:\1_images_{dir_suffix}/full_images"
     
     # ========================================
     # 生成条纹
@@ -353,18 +356,18 @@ if __name__ == "__main__":
         else:  # both
             print(f"   ✅ 一维数据 (垂直+水平): 每频率4个相位×2方向 → {output_dir_1d}")
             print(f"      总文件数: {total_freqs} × 4 × 2 = {total_freqs * 4 * 2} 张")
-        print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}phase0.bmp, ...")
+        print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}f0_phase0.bmp, ...")
     else:
         print(f"   ❌ 一维数据: 不保存")
     if save_full_image:
         if save_full_4phase:
             print(f"   ✅ 完整图像 ({width} x {height}): 每频率4个相位{' × 2方向' if direction == 'both' else ''} → {output_dir_full}")
             print(f"      总文件数: {total_freqs} × 4 × {direction_multiplier} = {total_freqs * 4 * direction_multiplier} 张")
-            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}phase0.bmp, ...")
+            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}f0_phase0.bmp, ...")
         else:
             print(f"   ✅ 完整图像 ({width} x {height}): 每频率1个相位(0°){' × 2方向' if direction == 'both' else ''} → {output_dir_full}")
             print(f"      总文件数: {total_freqs} × {direction_multiplier} = {total_freqs * direction_multiplier} 张")
-            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}phase0.bmp, ...")
+            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}f0_phase0.bmp, ...")
     else:
         print(f"   ❌ 完整图像: 不保存")
     print("=" * 70)
@@ -428,7 +431,7 @@ if __name__ == "__main__":
         print("   📂 文件组织结构（Both模式）:")
         print("      - 每个频率一个文件夹（f0, f0_5, f1, ...）")
         print("      - 文件夹内包含垂直和水平两个方向的条纹")
-        print("      - 文件命名: vertical_phase{相位}.bmp, horizontal_phase{相位}.bmp")
+        print("      - 文件命名: vertical_f{频率标识}_phase{相位}.bmp, horizontal_f{频率标识}_phase{相位}.bmp")
     if save_1d_data:
         print("   ✅ 一维数据（4个相位：0°, 90°, 180°, 270°）")
         if direction == 'vertical':
@@ -445,13 +448,14 @@ if __name__ == "__main__":
             print("   ✅ 完整图像（仅0°相位）")
         print(f"      - 尺寸: {width} x {height} 像素")
     print("\n   📝 文件命名规则:")
-    print(f"      - 文件夹: f{{f×ck:.1f}} （例如：f0, f1_9, f10）")
+    print(f"      - 文件夹: f{{f×width:.1f}} （例如：f0, f1_9, f10）")
     if direction == 'both':
-        print(f"      - 文件: {{direction}}_phase{{相位}}.bmp")
-        print(f"        · 垂直条纹: vertical_phase0.bmp, vertical_phase90.bmp, ...")
-        print(f"        · 水平条纹: horizontal_phase0.bmp, horizontal_phase90.bmp, ...")
+        print(f"        注意：Both模式下，文件夹名基于垂直方向（f×width），两个方向的条纹保存在同一文件夹")
+        print(f"      - 文件: {{direction}}_f{{频率标识}}_phase{{相位}}.bmp")
+        print(f"        · 垂直条纹: vertical_f0_phase0.bmp, vertical_f144_phase90.bmp, ...")
+        print(f"        · 水平条纹: horizontal_f0_phase0.bmp, horizontal_f144_phase90.bmp, ...")
     else:
-        print(f"      - 文件: {direction}_phase{{相位}}.bmp")
+        print(f"      - 文件: {direction}_f{{频率标识}}_phase{{相位}}.bmp （例如：{direction}_f144_phase0.bmp, {direction}_f144_phase90.bmp）")
     print(f"\n   🔧 修改输出选项: save_1d_data, save_full_image, save_full_4phase")
     print(f"   🔧 更改方向: 修改 direction 参数 ('vertical', 'horizontal', 'both')")
     print("=" * 70)

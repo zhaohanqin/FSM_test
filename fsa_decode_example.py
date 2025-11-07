@@ -54,7 +54,7 @@ def decode_fsa_images():
     PROJECTOR_HEIGHT = 1080
     
     # FSA采集参数
-    NUM_FREQUENCIES = 121  # 采集的频率数量（M值）
+    NUM_FREQUENCIES = 151  # 采集的频率数量（M值）
     # 注意：总图像数 = NUM_FREQUENCIES × 4 (四步相移)
     
     # ==================== 解码方向选择 ====================
@@ -62,7 +62,7 @@ def decode_fsa_images():
     # - "both": 解码两个方向（水平+垂直），获得完整的2D对应关系
     # - "ver": 仅解码垂直条纹（获取投影仪列坐标/X坐标）
     # - "hor": 仅解码水平条纹（获取投影仪行坐标/Y坐标）
-    DECODE_DIRECTION = "ver"  # 可选: "both", "ver", "hor"
+    DECODE_DIRECTION = "both"  # 可选: "both", "ver", "hor"
     # ====================================================
     
     # ==================== 内存优化说明 ====================
@@ -74,16 +74,16 @@ def decode_fsa_images():
     # 直接输入图像文件夹的绝对路径（请根据实际情况修改）
     # 
     # 方式1：直接指定完整路径（推荐）
-    IMAGE_DIR_HOR = r"E:\code\images\data\fsa_test\hor"  # 水平条纹图像文件夹
-    IMAGE_DIR_VER = r"E:\code\images\data\fsa_test\ver"  # 垂直条纹图像文件夹
-    OUTPUT_DIR = r"E:\在校学习\fsa\results\fsa_decode"    # 输出结果文件夹
+    IMAGE_DIR_HOR = r"F:\FSM_horizontal_f0_f150_images"  # 水平条纹图像文件夹
+    IMAGE_DIR_VER = r"F:\FSM_vertical_f0_f150_images"  # 垂直条纹图像文件夹
+    OUTPUT_DIR = r"D:\在校学习\fsa\results\fsa_decode"    # 输出结果文件夹
     
     # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
     # =====================================================
     
     # 处理参数
-    BLOCK_SIZE = 2  # 分块处理大小（低内存模式下不使用）
-    USE_CACHE = False  # 是否使用缓存（禁用缓存可避免大文件保存导致的内存错误）
+    BLOCK_SIZE = 100  # 分块处理大小
+    USE_CACHE = True  # 是否使用缓存（禁用缓存可避免大文件保存导致的内存错误）
     VERIFY_SEQUENCE = True  # 是否验证图像序列顺序
     
     # ==================== 内存模式选择 ====================
@@ -100,11 +100,8 @@ def decode_fsa_images():
     #   - 速度: 快（约需 1-3 分钟）
     #   - 适用: 内存 ≥ 16GB 的系统
     #
-    LOW_MEMORY_MODE = True  #  内存不足时必须设为 True
+    LOW_MEMORY_MODE = False  #  内存不足时必须设为 True
     # ====================================================
-    
-    # 调试参数（可选）
-    DEBUG_POINT = (900, 495)  # 查看特定点的解码详情，设为None则不输出
     
     # ==================== 频谱分析参数 ====================
     #  SPECTRUM_POINT: 频谱分析点坐标
@@ -171,15 +168,14 @@ def decode_fsa_images():
                 verify_sequence=VERIFY_SEQUENCE
             )
             
-            # 执行解码
+            # 执行解码 - 注意：both模式下也要生成频谱
             disparity_hor, peak_hor, spectrum_hor = decoder.decode_direction(
                 images=images_hor,
                 direction='hor',
                 num_frequencies=NUM_FREQUENCIES,
                 block_size=BLOCK_SIZE,
-                debug_point=DEBUG_POINT,
                 low_memory=LOW_MEMORY_MODE,
-                spectrum_point=SPECTRUM_POINT if DECODE_DIRECTION in ["both", "hor"] else None
+                spectrum_point=SPECTRUM_POINT  # 总是传入，不管是什么模式
             )
             
             # 保存结果
@@ -221,15 +217,14 @@ def decode_fsa_images():
                 verify_sequence=VERIFY_SEQUENCE
             )
             
-            # 执行解码
+            # 执行解码 - 注意：both模式下也要生成频谱
             disparity_ver, peak_ver, spectrum_ver = decoder.decode_direction(
                 images=images_ver,
                 direction='ver',
                 num_frequencies=NUM_FREQUENCIES,
                 block_size=BLOCK_SIZE,
-                debug_point=DEBUG_POINT,
                 low_memory=LOW_MEMORY_MODE,
-                spectrum_point=SPECTRUM_POINT if DECODE_DIRECTION in ["both", "ver"] else None
+                spectrum_point=SPECTRUM_POINT  # 总是传入，不管是什么模式
             )
             
             # 保存结果
@@ -255,18 +250,19 @@ def decode_fsa_images():
         print("\n⊙ 根据配置，跳过垂直方向解码（仅解码水平方向）")
     
     # ==================== 保存频谱数据 ====================
-    spectrum_data_saved = None
+    spectrum_data_list = []  # 存储所有方向的频谱数据
+    
     if DECODE_DIRECTION in ["both", "hor"] and 'spectrum_hor' in locals() and spectrum_hor is not None:
-        spectrum_data_saved = spectrum_hor
         spectrum_path = os.path.join(OUTPUT_DIR, "spectrum_hor.npy")
         np.save(spectrum_path, spectrum_hor)
         print(f"\n✓ 水平方向频谱数据已保存: {spectrum_path}")
+        spectrum_data_list.append(spectrum_hor)
     
     if DECODE_DIRECTION in ["both", "ver"] and 'spectrum_ver' in locals() and spectrum_ver is not None:
-        spectrum_data_saved = spectrum_ver
         spectrum_path = os.path.join(OUTPUT_DIR, "spectrum_ver.npy")
         np.save(spectrum_path, spectrum_ver)
         print(f"\n✓ 垂直方向频谱数据已保存: {spectrum_path}")
+        spectrum_data_list.append(spectrum_ver)
     
     # ==================== 完成 ====================
     print("\n" + "="*80)
@@ -314,7 +310,7 @@ def decode_fsa_images():
         print("  1. 可视化当前的行坐标结果")
         print("  2. 使用峰值图评估解码质量")
     
-    return OUTPUT_DIR, spectrum_data_saved
+    return OUTPUT_DIR, spectrum_data_list
 
 
 def visualize_spectrum(spectrum_data: dict, save_path: str = None):
@@ -327,12 +323,60 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
         频谱数据字典（从decode_direction返回）
     save_path : str, optional
         保存图像的路径
-    """
-    import matplotlib.pyplot as plt
     
-    # 设置中文字体
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+    注意：如果出现 matplotlib 导入错误，请运行：
+    pip install --upgrade matplotlib scikit-image
+    或降级 NumPy：
+    pip install "numpy<2"
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as e:
+        print(f"\n❌ 频谱可视化错误：无法导入 matplotlib")
+        print(f"错误原因：{str(e)[:100]}")
+        print("\n解决方案：")
+        print("  1. 降级 NumPy：pip install 'numpy<2'")
+        print("  2. 升级 matplotlib：pip install --upgrade matplotlib")
+        print("  3. 重新安装依赖：pip install --upgrade scikit-image pillow")
+        return None
+    
+    # ==================== 字体配置（支持中文和数学符号） ====================
+    # 设置中文字体（自动选择系统可用的字体）
+    import matplotlib.font_manager as fm
+    
+    # 获取系统中可用的中文字体
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    
+    # 优先级字体列表（按优先级排序）
+    font_candidates = [
+        'SimHei',           # Windows 中文
+        'Microsoft YaHei',  # Windows 微软雅黑
+        'STHeiti',          # macOS
+        'DejaVu Sans',      # 备选（英文字体）
+        'Arial Unicode MS', # 备选
+        'WenQuanYi Zen Hei'  # Linux
+    ]
+    
+    # 选择第一个可用的字体
+    selected_font = None
+    for font in font_candidates:
+        if font in available_fonts:
+            selected_font = font
+            print(f"  ✓ 已选择字体: {font}")
+            break
+    
+    if selected_font is None:
+        selected_font = 'DejaVu Sans'
+        print(f"  ⚠ 未找到中文字体，使用备选字体: {selected_font}")
+    
+    # 配置 matplotlib 字体和显示参数
+    plt.rcParams['font.sans-serif'] = [selected_font, 'DejaVu Sans']
     plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams['font.size'] = 9  # 字体大小
+    
+    # 关闭字体警告（避免大量 UserWarning）
+    import warnings
+    warnings.filterwarnings('ignore', category=UserWarning)
     
     print("\n" + "="*80)
     print("频谱可视化分析")
@@ -350,15 +394,15 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     print(f"最大峰值位置: {spectrum_data['peak_index']}")
     print(f"最大峰值强度: {spectrum_data['peak_value']:.4f}")
     
-    # 创建图形
-    fig = plt.figure(figsize=(18, 12))
+    # 创建图形 (2行4列布局，但只用7个子图)
+    fig = plt.figure(figsize=(20, 10))
     
     # 1. 原始强度序列
-    ax1 = plt.subplot(3, 3, 1)
-    ax1.plot(spectrum_data['I0'], 'o-', label='I₀ (0°)', linewidth=1.5, markersize=3)
-    ax1.plot(spectrum_data['I1'], 's-', label='I₁ (90°)', linewidth=1.5, markersize=3)
-    ax1.plot(spectrum_data['I2'], '^-', label='I₂ (180°)', linewidth=1.5, markersize=3)
-    ax1.plot(spectrum_data['I3'], 'd-', label='I₃ (270°)', linewidth=1.5, markersize=3)
+    ax1 = plt.subplot(2, 4, 1)
+    ax1.plot(spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=1.5, markersize=3)
+    ax1.plot(spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=1.5, markersize=3)
+    ax1.plot(spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=1.5, markersize=3)
+    ax1.plot(spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=1.5, markersize=3)
     ax1.set_xlabel('频率索引 k')
     ax1.set_ylabel('强度值')
     ax1.set_title(f'1. 原始强度序列\n(M={M}个频率，每个4个相位)')
@@ -366,9 +410,9 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax1.grid(True, alpha=0.3)
     
     # 2. 差分信号
-    ax2 = plt.subplot(3, 3, 2)
-    ax2.plot(spectrum_data['Dc'], 'o-', label='Dc = I₀ - I₂', linewidth=1.5, markersize=3)
-    ax2.plot(spectrum_data['Ds'], 's-', label='Ds = I₃ - I₁', linewidth=1.5, markersize=3)
+    ax2 = plt.subplot(2, 4, 2)
+    ax2.plot(spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=1.5, markersize=3)
+    ax2.plot(spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=1.5, markersize=3)
     ax2.set_xlabel('频率索引 k')
     ax2.set_ylabel('差分值')
     ax2.set_title('2. 差分信号\n(消除直流分量和反射率)')
@@ -376,7 +420,7 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax2.grid(True, alpha=0.3)
     
     # 3. 复数信号的幅值
-    ax3 = plt.subplot(3, 3, 3)
+    ax3 = plt.subplot(2, 4, 3)
     D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
     ax3.plot(D_magnitude, 'o-', color='purple', linewidth=1.5, markersize=3)
     ax3.set_xlabel('频率索引 k')
@@ -385,7 +429,7 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax3.grid(True, alpha=0.3)
     
     # 4. 完整频谱（线性坐标）
-    ax4 = plt.subplot(3, 3, 4)
+    ax4 = plt.subplot(2, 4, 4)
     spectrum = spectrum_data['spectrum']
     frequencies = spectrum_data['frequencies']
     ax4.plot(frequencies, spectrum, '-', linewidth=1, color='blue', alpha=0.7)
@@ -398,7 +442,7 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax4.grid(True, alpha=0.3)
     
     # 5. 完整频谱（对数坐标）
-    ax5 = plt.subplot(3, 3, 5)
+    ax5 = plt.subplot(2, 4, 5)
     spectrum_log = np.log10(spectrum + 1e-10)
     ax5.plot(frequencies, spectrum_log, '-', linewidth=1, color='green', alpha=0.7)
     ax5.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
@@ -410,7 +454,7 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax5.grid(True, alpha=0.3)
     
     # 6. 局部放大（峰值附近）
-    ax6 = plt.subplot(3, 3, 6)
+    ax6 = plt.subplot(2, 4, 6)
     peak_idx = spectrum_data['peak_index']
     half_width = 100
     start = max(0, peak_idx - half_width)
@@ -425,60 +469,283 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax6.legend(loc='best')
     ax6.grid(True, alpha=0.3)
     
-    # 7. 前20个峰值分析
-    ax7 = plt.subplot(3, 3, 7)
+    # 7. 前20个峰值分析（改进版：折线图显示投影仪坐标与峰值强度的关系）
+    ax7 = plt.subplot(2, 4, 7)
     top20_indices = np.argsort(spectrum)[-20:][::-1]
     top20_values = spectrum[top20_indices]
-    colors_bar = ['red' if i == 0 else 'orange' if i < 3 else 'blue' for i in range(len(top20_indices))]
-    ax7.bar(range(len(top20_indices)), top20_values, color=colors_bar, edgecolor='black')
-    ax7.set_xlabel('峰值排名')
-    ax7.set_ylabel('归一化幅值')
-    ax7.set_title('7. 前20个峰值强度\n(红色=最大，橙色=次要)')
-    ax7.grid(True, alpha=0.3, axis='y')
     
-    # 8. 前20个峰值位置
-    ax8 = plt.subplot(3, 3, 8)
-    ax8.bar(range(len(top20_indices)), top20_indices, color=colors_bar, edgecolor='black')
-    ax8.set_xlabel('峰值排名')
-    ax8.set_ylabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
-    ax8.set_title('8. 前20个峰值位置\n(显示所有可能的对应关系)')
-    ax8.grid(True, alpha=0.3, axis='y')
+    # 绘制折线图
+    ax7.plot(top20_indices, top20_values, 'o-', linewidth=2, markersize=6, color='blue', alpha=0.7)
     
-    # 9. 峰值信息文本
-    ax9 = plt.subplot(3, 3, 9)
-    ax9.axis('off')
-    info_text = f"""
-频谱分析结果总结
-
-像素坐标: ({point[0]}, {point[1]})
-解码方向: {'水平 (行)' if direction == 'hor' else '垂直 (列)'}
-
-频率数量 M: {M}
-DFT长度 N: {N}
-
-最佳匹配:
-  投影仪坐标: {spectrum_data['peak_index']}
-  峰值强度: {spectrum_data['peak_value']:.4f}
-
-前10个峰值:
-"""
-    for i, idx in enumerate(top20_indices[:10]):
-        info_text += f"  #{i+1}: 位置={idx:4d}, 强度={spectrum[idx]:.4f}\n"
+    # 高亮显示最大峰值（红色）
+    ax7.plot(top20_indices[0], top20_values[0], 'o', markersize=10, color='red', 
+             label=f'最大峰值 (位置={top20_indices[0]}, 强度={top20_values[0]:.2f})')
     
-    ax9.text(0.1, 0.9, info_text, transform=ax9.transAxes, 
-             fontsize=10, verticalalignment='top', fontfamily='monospace',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    # 在每个点旁边显示纵坐标值（简化版，不用框）
+    for i in range(min(10, len(top20_indices))):
+        # 偏移量，避免文字重叠
+        y_offset = 0.15 if i % 2 == 0 else -0.25
+        ax7.text(top20_indices[i], top20_values[i] + y_offset, f'{top20_values[i]:.2f}', 
+                fontsize=8, ha='center', va='center', 
+                color='red' if i == 0 else 'darkblue', fontweight='bold')
+    
+    ax7.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=11)
+    ax7.set_ylabel('归一化幅值', fontsize=11)
+    ax7.set_title('7. 前20个峰值分析（按强度排序）\n(投影仪坐标 vs 峰值强度)', fontsize=12, fontweight='bold')
+    ax7.legend(loc='best', fontsize=9)
+    ax7.grid(True, alpha=0.3)
+    
+    # 8. 峰值强度随坐标变化（新增：按投影仪坐标排序）
+    ax8 = plt.subplot(2, 4, 8)
+    
+    # 按照投影仪坐标从小到大排序
+    sorted_order = np.argsort(top20_indices)
+    sorted_indices = top20_indices[sorted_order]
+    sorted_values = top20_values[sorted_order]
+    
+    # 找到最大峰值在排序后的位置
+    max_peak_pos = np.where(sorted_indices == top20_indices[0])[0][0]
+    
+    # 绘制折线图
+    ax8.plot(sorted_indices, sorted_values, 'o-', linewidth=2, markersize=6, color='blue', alpha=0.7, label='峰值强度')
+    
+    # 高亮显示最大峰值（红色）
+    ax8.plot(sorted_indices[max_peak_pos], sorted_values[max_peak_pos], 'o', markersize=10, color='red', 
+             label=f'最大峰值 (位置={sorted_indices[max_peak_pos]}, 强度={sorted_values[max_peak_pos]:.2f})', zorder=5)
+    
+    # 在关键点旁边显示数值（简化版）
+    for i in range(0, len(sorted_indices), max(1, len(sorted_indices)//8)):  # 只显示部分点，避免拥挤
+        y_offset = 0.15 if i % 2 == 0 else -0.25
+        color = 'red' if i == max_peak_pos else 'darkblue'
+        ax8.text(sorted_indices[i], sorted_values[i] + y_offset, f'{sorted_values[i]:.2f}', 
+                fontsize=8, ha='center', va='center', color=color, fontweight='bold')
+    
+    ax8.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=11)
+    ax8.set_ylabel('归一化幅值', fontsize=11)
+    ax8.set_title('8. 峰值强度随坐标变化（按坐标排序）\n显示峰值的空间分布', fontsize=12, fontweight='bold')
+    ax8.legend(loc='best', fontsize=9)
+    ax8.grid(True, alpha=0.3)
     
     plt.suptitle(f'FSA频谱分析 - 像素({point[0]}, {point[1]}) - {direction.upper()}方向', 
                  fontsize=16, fontweight='bold')
     plt.tight_layout()
     
+    # ==================== 保存完整的8子图图像 ====================
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"\n✓ 频谱可视化图像已保存: {save_path}")
+        print(f"\n✓ 完整频谱图像已保存: {save_path}")
     
-    plt.show()
+    # ==================== 分别保存8张子图 ====================
+    if save_path:
+        # 获取保存目录
+        save_dir = os.path.dirname(save_path)
+        base_name = os.path.basename(save_path).replace('.png', '')
+        
+        print(f"\n正在保存各个子图...")
+        
+        # 定义9个子图的绘制函数
+        def save_subplot_1():
+            """1. 原始强度序列"""
+            fig_sub = plt.figure(figsize=(10, 6))
+            plt.plot(spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=2, markersize=4)
+            plt.plot(spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=2, markersize=4)
+            plt.plot(spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=2, markersize=4)
+            plt.plot(spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=2, markersize=4)
+            plt.xlabel('频率索引 k', fontsize=12)
+            plt.ylabel('强度值', fontsize=12)
+            plt.title(f'原始强度序列 (M={M}个频率，每个4个相位)', fontsize=14, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.3)
+            path = os.path.join(save_dir, f'{base_name}_01_原始强度序列.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_2():
+            """2. 差分信号"""
+            fig_sub = plt.figure(figsize=(10, 6))
+            plt.plot(spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=2, markersize=4)
+            plt.plot(spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=2, markersize=4)
+            plt.xlabel('频率索引 k', fontsize=12)
+            plt.ylabel('差分值', fontsize=12)
+            plt.title('差分信号 (消除直流分量和反射率)', fontsize=14, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.3)
+            path = os.path.join(save_dir, f'{base_name}_02_差分信号.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_3():
+            """3. 复数信号幅值"""
+            fig_sub = plt.figure(figsize=(10, 6))
+            D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
+            plt.plot(D_magnitude, 'o-', color='purple', linewidth=2, markersize=4)
+            plt.xlabel('频率索引 k', fontsize=12)
+            plt.ylabel('|D| (复数信号幅值)', fontsize=12)
+            plt.title('复数信号幅值 (D = Dc + j·Ds)', fontsize=14, fontweight='bold')
+            plt.grid(True, alpha=0.3)
+            path = os.path.join(save_dir, f'{base_name}_03_复数信号幅值.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_4():
+            """4. 完整频谱（线性）"""
+            fig_sub = plt.figure(figsize=(12, 6))
+            plt.plot(frequencies, spectrum, '-', linewidth=1.5, color='blue', alpha=0.7)
+            plt.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
+                       linewidth=2.5, label=f"峰值位置={spectrum_data['peak_index']}")
+            plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=12)
+            plt.ylabel('归一化幅值', fontsize=12)
+            plt.title(f'完整DFT频谱-线性坐标 (峰值强度={spectrum_data["peak_value"]:.4f})', 
+                     fontsize=14, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.3)
+            path = os.path.join(save_dir, f'{base_name}_04_完整频谱_线性.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_5():
+            """5. 完整频谱（对数）"""
+            fig_sub = plt.figure(figsize=(12, 6))
+            spectrum_log = np.log10(spectrum + 1e-10)
+            plt.plot(frequencies, spectrum_log, '-', linewidth=1.5, color='green', alpha=0.7)
+            plt.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
+                       linewidth=2.5, label=f"峰值位置={spectrum_data['peak_index']}")
+            plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=12)
+            plt.ylabel('log₁₀(幅值)', fontsize=12)
+            plt.title('完整DFT频谱-对数坐标 (更清晰显示次要峰值)', fontsize=14, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.3)
+            path = os.path.join(save_dir, f'{base_name}_05_完整频谱_对数.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_6():
+            """6. 峰值附近局部放大"""
+            fig_sub = plt.figure(figsize=(10, 6))
+            peak_idx = spectrum_data['peak_index']
+            half_width = 100
+            start = max(0, peak_idx - half_width)
+            end = min(N, peak_idx + half_width)
+            plt.plot(frequencies[start:end], spectrum[start:end], 'o-', 
+                    linewidth=2.5, markersize=5, color='purple')
+            plt.axvline(x=peak_idx, color='red', linestyle='--', linewidth=2.5, 
+                       label=f'峰值位置={peak_idx}')
+            plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=12)
+            plt.ylabel('归一化幅值', fontsize=12)
+            plt.title(f'峰值附近局部放大 (范围: [{start}, {end}])', fontsize=14, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.3)
+            path = os.path.join(save_dir, f'{base_name}_06_峰值局部放大.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_7():
+            """7. 前20个峰值分析（按强度排序）"""
+            fig_sub = plt.figure(figsize=(12, 7))
+            top20_indices = np.argsort(spectrum)[-20:][::-1]
+            top20_values = spectrum[top20_indices]
+            
+            # 绘制折线图
+            plt.plot(top20_indices, top20_values, 'o-', linewidth=2.5, markersize=8, 
+                    color='blue', alpha=0.7, label='峰值强度')
+            
+            # 高亮显示最大峰值（红色）
+            plt.plot(top20_indices[0], top20_values[0], 'o', markersize=15, color='red', 
+                    zorder=5, label=f'最大峰值 (位置={top20_indices[0]}, 强度={top20_values[0]:.2f})')
+            
+            # 在每个点旁边显示纵坐标值（简化版，不用框）
+            for i in range(min(10, len(top20_indices))):
+                y_offset = 0.2 if i % 2 == 0 else -0.3
+                plt.text(top20_indices[i], top20_values[i] + y_offset, f'{top20_values[i]:.2f}', 
+                        fontsize=10, ha='center', va='center', 
+                        color='red' if i == 0 else 'darkblue', fontweight='bold')
+            
+            plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=13, fontweight='bold')
+            plt.ylabel('归一化幅值', fontsize=13, fontweight='bold')
+            plt.title(f'前20个峰值分析（按强度排序）\n像素({point[0]}, {point[1]}) - {direction.upper()}方向', 
+                     fontsize=15, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.4, linestyle='--')
+            
+            path = os.path.join(save_dir, f'{base_name}_07_峰值分析_按强度.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        def save_subplot_8():
+            """8. 峰值强度随坐标变化（按坐标排序）"""
+            fig_sub = plt.figure(figsize=(12, 7))
+            top20_indices = np.argsort(spectrum)[-20:][::-1]
+            top20_values = spectrum[top20_indices]
+            
+            # 按照投影仪坐标从小到大排序
+            sorted_order = np.argsort(top20_indices)
+            sorted_indices = top20_indices[sorted_order]
+            sorted_values = top20_values[sorted_order]
+            
+            # 找到最大峰值在排序后的位置
+            max_peak_pos = np.where(sorted_indices == top20_indices[0])[0][0]
+            
+            # 绘制折线图
+            plt.plot(sorted_indices, sorted_values, 'o-', linewidth=2.5, markersize=8, 
+                    color='blue', alpha=0.7, label='峰值强度')
+            
+            # 高亮显示最大峰值（红色）
+            plt.plot(sorted_indices[max_peak_pos], sorted_values[max_peak_pos], 'o', markersize=15, color='red', 
+                    zorder=5, label=f'最大峰值 (位置={sorted_indices[max_peak_pos]}, 强度={sorted_values[max_peak_pos]:.2f})')
+            
+            # 在关键点旁边显示数值（简化版）
+            for i in range(0, len(sorted_indices), max(1, len(sorted_indices)//8)):
+                y_offset = 0.2 if i % 2 == 0 else -0.3
+                color = 'red' if i == max_peak_pos else 'darkblue'
+                plt.text(sorted_indices[i], sorted_values[i] + y_offset, f'{sorted_values[i]:.2f}', 
+                        fontsize=10, ha='center', va='center', color=color, fontweight='bold')
+            
+            plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=13, fontweight='bold')
+            plt.ylabel('归一化幅值', fontsize=13, fontweight='bold')
+            plt.title(f'峰值强度随坐标变化（按坐标排序）\n像素({point[0]}, {point[1]}) - {direction.upper()}方向', 
+                     fontsize=15, fontweight='bold')
+            plt.legend(loc='best', fontsize=11)
+            plt.grid(True, alpha=0.4, linestyle='--')
+            
+            path = os.path.join(save_dir, f'{base_name}_08_峰值分析_按坐标.png')
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sub)
+            return path
+        
+        # 执行保存（保存8张子图）
+        saved_files = []
+        try:
+            saved_files.append(('原始强度序列', save_subplot_1()))
+            saved_files.append(('差分信号', save_subplot_2()))
+            saved_files.append(('复数信号幅值', save_subplot_3()))
+            saved_files.append(('完整频谱_线性', save_subplot_4()))
+            saved_files.append(('完整频谱_对数', save_subplot_5()))
+            saved_files.append(('峰值局部放大', save_subplot_6()))
+            saved_files.append(('峰值分析_按强度', save_subplot_7()))
+            saved_files.append(('峰值分析_按坐标', save_subplot_8()))
+            
+            print(f"\n✓ 已保存 {len(saved_files)} 张独立子图:")
+            for name, path in saved_files:
+                file_size = os.path.getsize(path) / 1024  # KB
+                print(f"  ✓ {name:16s} - {os.path.basename(path):70s} ({file_size:.1f} KB)")
+        
+        except Exception as e:
+            print(f"⚠ 警告：保存子图时出错: {str(e)[:100]}")
+    
+    try:
+        plt.show()
+    except Exception as e:
+        print(f"⚠ 警告：无法显示图形窗口: {str(e)[:50]}")
+    
     print("="*80)
+    return True
 
 
 def load_and_inspect_results(result_dir: str):
@@ -535,27 +802,45 @@ def load_and_inspect_results(result_dir: str):
 
 if __name__ == "__main__":
     # 执行解码
-    result_dir, spectrum_data = decode_fsa_images()
+    result_dir, spectrum_data_list = decode_fsa_images()
     
     # 检查结果
     if result_dir and os.path.exists(result_dir):
         load_and_inspect_results(result_dir)
     
     # 可视化频谱（如果有频谱数据）
-    if spectrum_data is not None:
+    if spectrum_data_list and len(spectrum_data_list) > 0:
         print("\n" + "="*80)
         print("开始频谱可视化")
         print("="*80)
         
-        # 确定保存路径
-        vis_dir = os.path.join(result_dir, "..", "visualizations") if result_dir else "./results/visualizations"
-        os.makedirs(vis_dir, exist_ok=True)
+        # 为每个方向创建单独的子文件夹
+        base_vis_dir = os.path.join(result_dir, "..", "visualizations") if result_dir else "./results/visualizations"
         
-        direction = spectrum_data['direction']
-        point = spectrum_data['point']
-        save_path = os.path.join(vis_dir, f'spectrum_{direction}_x{point[0]}_y{point[1]}.png')
+        for spectrum_data in spectrum_data_list:
+            direction = spectrum_data['direction']
+            point = spectrum_data['point']
+            
+            # 为每个方向创建子文件夹
+            vis_dir = os.path.join(base_vis_dir, f"{direction}_direction")
+            os.makedirs(vis_dir, exist_ok=True)
+            
+            print(f"\n{'='*60}")
+            print(f"可视化 {direction.upper()} 方向的频谱分析")
+            print(f"保存位置: {vis_dir}")
+            print(f"{'='*60}")
+            
+            save_path = os.path.join(vis_dir, f'spectrum_{direction}_x{point[0]}_y{point[1]}.png')
+            
+            result = visualize_spectrum(spectrum_data, save_path=save_path)
+            if result is None:
+                print(f"\n⚠ 提示：{direction} 方向频谱可视化失败，请解决 matplotlib 版本问题后重试")
         
-        visualize_spectrum(spectrum_data, save_path=save_path)
+        print(f"\n✓ 所有频谱可视化完成")
+        print(f"  基础目录: {base_vis_dir}")
+        if len(spectrum_data_list) == 2:
+            print(f"  - HOR方向: {os.path.join(base_vis_dir, 'hor_direction')}")
+            print(f"  - VER方向: {os.path.join(base_vis_dir, 'ver_direction')}")
     
     print("\n" + "="*80)
     print("程序结束")

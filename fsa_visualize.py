@@ -22,7 +22,7 @@ plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
 class FSAVisualizer:
     """FSA解码结果可视化工具"""
     
-    def __init__(self, result_dir: str):
+    def __init__(self, result_dir: str, peak_threshold: float = 0.5):
         """
         初始化可视化工具
         
@@ -30,12 +30,20 @@ class FSAVisualizer:
         -----------
         result_dir : str
             解码结果文件夹路径
+        peak_threshold : float, optional
+            峰值阈值，用于过滤低质量像素。默认值为0.5
+            - 推荐值：0.5（中等质量以上）
+            - 高质量：1.0
+            - 包容性强：0.3
         """
         self.result_dir = result_dir
+        self.peak_threshold = peak_threshold  # 统一的阈值参数
         self.disparity_hor = None
         self.disparity_ver = None
         self.peak_hor = None
         self.peak_ver = None
+        
+        print(f"初始化可视化工具，峰值阈值 = {peak_threshold}")
         
         # 加载数据
         self.load_results()
@@ -61,7 +69,7 @@ class FSAVisualizer:
             else:
                 print(f"  ✗ 未找到 {filename}")
     
-    def visualize_disparity(self, direction='ver', peak_threshold=1.0, save_path=None):
+    def visualize_disparity(self, direction='ver', peak_threshold=None, save_path=None):
         """
         可视化视差图
         
@@ -69,11 +77,16 @@ class FSAVisualizer:
         -----------
         direction : str
             'hor' 或 'ver'
-        peak_threshold : float
+        peak_threshold : float, optional
             峰值阈值，低于此值的像素将被标记为无效
+            如果为None，则使用初始化时设定的统一阈值
         save_path : str, optional
             保存图像的路径
         """
+        # 如果没有指定阈值，使用统一阈值
+        if peak_threshold is None:
+            peak_threshold = self.peak_threshold
+        
         if direction == 'hor':
             disparity = self.disparity_hor
             peak = self.peak_hor
@@ -223,17 +236,21 @@ class FSAVisualizer:
         
         plt.show()
     
-    def visualize_correspondence_map(self, peak_threshold=0.5, save_path=None):
+    def visualize_correspondence_map(self, peak_threshold=None, save_path=None):
         """
         可视化完整的相机-投影仪对应关系
         
         Parameters:
         -----------
-        peak_threshold : float
-            峰值阈值
+        peak_threshold : float, optional
+            峰值阈值，如果为None，则使用初始化时设定的统一阈值
         save_path : str, optional
             保存路径
         """
+        # 如果没有指定阈值，使用统一阈值
+        if peak_threshold is None:
+            peak_threshold = self.peak_threshold
+        
         if self.disparity_hor is None or self.disparity_ver is None:
             print("警告: 需要两个方向的视差数据")
             return
@@ -413,28 +430,35 @@ def main():
     print("FSA解码结果可视化工具")
     print("="*80)
     
-    # 配置路径（需要根据实际情况修改）
-    BASE_DIR = r"E:\在校学习\fsa"
+    # ==================== 配置参数 ====================
+    # 路径配置
+    BASE_DIR = r"D:\在校学习\fsa"
     RESULT_DIR = os.path.join(BASE_DIR, "results", "fsa_decode")
     OUTPUT_DIR = os.path.join(BASE_DIR, "results", "visualizations")
+    
+    # ⭐ 统一峰值阈值设置 ⭐
+    # 修改这一个参数，就可以改变所有可视化的阈值！
+    PEAK_THRESHOLD = 0.5  # 可选值：
+                           # - 0.5 (推荐): 中等质量以上
+                           # - 1.0: 只显示高质量像素
+                           # - 0.3: 包容性强，显示更多像素
+    # ================================================
     
     # 创建输出目录
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # 创建可视化工具
-    visualizer = FSAVisualizer(RESULT_DIR)
+    # 创建可视化工具（传入统一阈值）
+    visualizer = FSAVisualizer(RESULT_DIR, peak_threshold=PEAK_THRESHOLD)
     
-    # 1. 可视化视差图
+    # 1. 可视化视差图（自动使用统一阈值）
     print("\n生成视差图...")
     visualizer.visualize_disparity(
         direction='ver',
-        peak_threshold=0.5,
         save_path=os.path.join(OUTPUT_DIR, 'disparity_ver.png')
     )
     
     visualizer.visualize_disparity(
         direction='hor',
-        peak_threshold=0.5,
         save_path=os.path.join(OUTPUT_DIR, 'disparity_hor.png')
     )
     
@@ -444,10 +468,9 @@ def main():
         save_path=os.path.join(OUTPUT_DIR, 'statistics.png')
     )
     
-    # 3. 完整对应关系
+    # 3. 完整对应关系（自动使用统一阈值）
     print("\n生成对应关系图...")
     visualizer.visualize_correspondence_map(
-        peak_threshold=0.5,
         save_path=os.path.join(OUTPUT_DIR, 'correspondence_map.png')
     )
     

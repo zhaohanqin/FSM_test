@@ -220,7 +220,7 @@ def generate_fringe_for_cycles(cycles: float, height: int, width: int,
                 # 按标准四步相移顺序生成：0°, 90°, 180°, 270°
                 pattern_1d = generate_sine_1d(width, frequency, phase_deg, P_A, P_B)
                 img_1d = Image.fromarray(pattern_1d.reshape((1, width)), "L")
-                fname_1d = f"{file_prefix}phase{phase_deg}.bmp"
+                fname_1d = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                 img_1d.save(os.path.join(dir_1d, fname_1d), format="BMP")
         
         # 保存完整图像（height x width）
@@ -231,14 +231,14 @@ def generate_fringe_for_cycles(cycles: float, height: int, width: int,
                     pattern_1d = generate_sine_1d(width, frequency, phase_deg, P_A, P_B)
                     full_pattern = np.tile(pattern_1d, (height, 1))
                     img_full = Image.fromarray(full_pattern, "L")
-                    fname_full = f"{file_prefix}phase{phase_deg}.bmp"
+                    fname_full = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                     img_full.save(os.path.join(dir_full, fname_full), format="BMP")
             else:
                 # 只生成0°相位
                 pattern_1d = generate_sine_1d(width, frequency, 0, P_A, P_B)
                 full_pattern = np.tile(pattern_1d, (height, 1))
                 img_full = Image.fromarray(full_pattern, "L")
-                fname_full = f"{file_prefix}phase0.bmp"
+                fname_full = f"{file_prefix}{folder_name}_phase0.bmp"
                 img_full.save(os.path.join(dir_full, fname_full), format="BMP")
         
         # 计算实际周期（像素数）
@@ -268,7 +268,7 @@ def generate_fringe_for_cycles(cycles: float, height: int, width: int,
                 # 按标准四步相移顺序生成：0°, 90°, 180°, 270°
                 pattern_1d = generate_sine_1d(height, frequency, phase_deg, P_A, P_B)
                 img_1d = Image.fromarray(pattern_1d.reshape((height, 1)), "L")
-                fname_1d = f"{file_prefix}phase{phase_deg}.bmp"
+                fname_1d = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                 img_1d.save(os.path.join(dir_1d, fname_1d), format="BMP")
         
         # 保存完整图像（height x width）
@@ -279,14 +279,14 @@ def generate_fringe_for_cycles(cycles: float, height: int, width: int,
                     pattern_1d = generate_sine_1d(height, frequency, phase_deg, P_A, P_B)
                     full_pattern = np.tile(pattern_1d.reshape((height, 1)), (1, width))
                     img_full = Image.fromarray(full_pattern, "L")
-                    fname_full = f"{file_prefix}phase{phase_deg}.bmp"
+                    fname_full = f"{file_prefix}{folder_name}_phase{phase_deg}.bmp"
                     img_full.save(os.path.join(dir_full, fname_full), format="BMP")
             else:
                 # 只生成0°相位
                 pattern_1d = generate_sine_1d(height, frequency, 0, P_A, P_B)
                 full_pattern = np.tile(pattern_1d.reshape((height, 1)), (1, width))
                 img_full = Image.fromarray(full_pattern, "L")
-                fname_full = f"{file_prefix}phase0.bmp"
+                fname_full = f"{file_prefix}{folder_name}_phase0.bmp"
                 img_full.save(os.path.join(dir_full, fname_full), format="BMP")
         
         # 计算实际周期（像素数）
@@ -317,7 +317,7 @@ if __name__ == "__main__":
     # 周期参数（新的定义方式）
     cycles_min = 0        # 最小周期数（DC分量，0个周期）
     cycles_max = 150      # 最大周期数（图像中最多有多少个完整周期）
-    cycles_step = 1     # 周期增量（每次增加多少个周期）
+    cycles_step = 0.5     # 周期增量（每次增加多少个周期）
     
     # 💡 周期数说明：
     # - cycles = 0: DC分量（均匀灰度）
@@ -353,8 +353,8 @@ if __name__ == "__main__":
     # 输出目录
     # 如果是both模式，目录名不包含方向；否则包含方向
     dir_suffix = direction if direction != 'both' else 'both'
-    output_dir_1d = fr"F:\1cycles_images_{dir_suffix}/1d_data"
-    output_dir_full = fr"F:\1cycles_images_{dir_suffix}/full_images"
+    output_dir_1d = fr"F:\{cycles_step}cycles_images_{dir_suffix}/1d_data"
+    output_dir_full = fr"F:\{cycles_step}cycles_images_{dir_suffix}/full_images"
     
     # ========================================
     # 生成条纹
@@ -397,18 +397,18 @@ if __name__ == "__main__":
         else:  # both
             print(f"   ✅ 一维数据 (垂直+水平): 每周期数4个相位×2方向 → {output_dir_1d}")
             print(f"      总文件数: {total_cycles} × 4 × 2 = {total_cycles * 4 * 2} 张")
-        print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}phase0.bmp, ...")
+        print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}f0_phase0.bmp, ...")
     else:
         print(f"   ❌ 一维数据: 不保存")
     if save_full_image:
         if save_full_4phase:
             print(f"   ✅ 完整图像 ({width} x {height}): 每周期数4个相位{' × 2方向' if direction == 'both' else ''} → {output_dir_full}")
             print(f"      总文件数: {total_cycles} × 4 × {direction_multiplier} = {total_cycles * 4 * direction_multiplier} 张")
-            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}phase0.bmp, ...")
+            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}f0_phase0.bmp, ...")
         else:
             print(f"   ✅ 完整图像 ({width} x {height}): 每周期数1个相位(0°){' × 2方向' if direction == 'both' else ''} → {output_dir_full}")
             print(f"      总文件数: {total_cycles} × {direction_multiplier} = {total_cycles * direction_multiplier} 张")
-            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}phase0.bmp, ...")
+            print(f"      文件结构: f0/{direction if direction != 'both' else 'vertical_'}f0_phase0.bmp, ...")
     else:
         print(f"   ❌ 完整图像: 不保存")
     print("=" * 80)
@@ -512,11 +512,11 @@ if __name__ == "__main__":
         print("   📂 文件组织结构（Both模式）:")
         print("      - 每个周期数对应一个文件夹（f0, f0_5, f1, f1_5, ...）")
         print("      - 文件夹内包含垂直和水平两个方向的条纹")
-        print("      - 文件命名: vertical_phase{相位}.bmp, horizontal_phase{相位}.bmp")
+        print("      - 文件命名: vertical_f{周期数}_phase{相位}.bmp, horizontal_f{周期数}_phase{相位}.bmp")
     else:
         print("   📂 文件组织结构:")
         print("      - 每个周期数对应一个文件夹（f0, f0_5, f1, f1_5, ...）")
-        print(f"      - 每个文件夹内包含4个相位文件（{direction}_phase0.bmp, {direction}_phase90.bmp, {direction}_phase180.bmp, {direction}_phase270.bmp）")
+        print(f"      - 每个文件夹内包含4个相位文件（{direction}_f{{周期数}}_phase0.bmp, {direction}_f{{周期数}}_phase90.bmp, {direction}_f{{周期数}}_phase180.bmp, {direction}_f{{周期数}}_phase270.bmp）")
         print("      - 方便批量导入和处理")
     if save_1d_data:
         print("\n   ✅ 一维数据（4个相位：0°, 90°, 180°, 270°）")
@@ -536,11 +536,11 @@ if __name__ == "__main__":
     print("\n   📝 文件命名规则:")
     print("      - 文件夹: f{周期数} （例如：f0, f0_5, f1, f10）")
     if direction == 'both':
-        print(f"      - 文件: {{direction}}_phase{{相位}}.bmp")
-        print(f"        · 垂直条纹: vertical_phase0.bmp, vertical_phase90.bmp, ...")
-        print(f"        · 水平条纹: horizontal_phase0.bmp, horizontal_phase90.bmp, ...")
+        print(f"      - 文件: {{direction}}_f{{周期数}}_phase{{相位}}.bmp")
+        print(f"        · 垂直条纹: vertical_f0_phase0.bmp, vertical_f144_phase90.bmp, ...")
+        print(f"        · 水平条纹: horizontal_f0_phase0.bmp, horizontal_f144_phase90.bmp, ...")
     else:
-        print(f"      - 文件: {direction}_phase{{相位}}.bmp （例如：{direction}_phase0.bmp, {direction}_phase90.bmp）")
+        print(f"      - 文件: {direction}_f{{周期数}}_phase{{相位}}.bmp （例如：{direction}_f144_phase0.bmp, {direction}_f144_phase90.bmp）")
     print(f"\n   🔧 修改输出选项: save_1d_data, save_full_image, save_full_4phase")
     print(f"   🔧 更改周期范围: cycles_min, cycles_max, cycles_step")
     print(f"   🔧 更改方向: direction 参数 ('vertical', 'horizontal', 'both')")
