@@ -40,88 +40,56 @@ FSA解码使用示例
 
 import numpy as np
 import os
-from fsa_decode_core import FSADecoder
+from FSM_decode_core import FSADecoder
 
 
-def decode_fsa_images():
+def decode_fsa_images(projector_width, projector_height, num_frequencies, decode_direction,
+                      image_dir_hor, image_dir_ver, output_dir, block_size, use_cache,
+                      verify_sequence, low_memory_mode, spectrum_point):
     """
     使用FSADecoder解码实际采集的图像
+    
+    Parameters:
+    -----------
+    projector_width : int
+        投影仪宽度（像素）
+    projector_height : int
+        投影仪高度（像素）
+    num_frequencies : int
+        采集的频率数量（M值）
+    decode_direction : str
+        解码方向: "both", "ver", "hor"
+    image_dir_hor : str
+        水平条纹图像文件夹路径
+    image_dir_ver : str
+        垂直条纹图像文件夹路径
+    output_dir : str
+        输出结果文件夹路径
+    block_size : int
+        分块处理大小
+    use_cache : bool
+        是否使用缓存
+    verify_sequence : bool
+        是否验证图像序列顺序
+    low_memory_mode : bool
+        是否使用低内存模式
+    spectrum_point : tuple or None
+        频谱分析点坐标 (x, y)
     """
     
-    # ==================== 配置参数 ====================
-    # 投影仪参数
-    PROJECTOR_WIDTH = 1920
-    PROJECTOR_HEIGHT = 1080
-    
-    # FSA采集参数
-    NUM_FREQUENCIES = 151  # 采集的频率数量（M值）
-    # 注意：总图像数 = NUM_FREQUENCIES × 4 (四步相移)
-    
-    # ==================== 解码方向选择 ====================
-    # 控制解码哪个方向：
-    # - "both": 解码两个方向（水平+垂直），获得完整的2D对应关系
-    # - "ver": 仅解码垂直条纹（获取投影仪列坐标/X坐标）
-    # - "hor": 仅解码水平条纹（获取投影仪行坐标/Y坐标）
-    DECODE_DIRECTION = "both"  # 可选: "both", "ver", "hor"
-    # ====================================================
-    
-    # ==================== 内存优化说明 ====================
-    # 💡 如果遇到内存不足错误，请查看下方的 LOW_MEMORY_MODE 参数
-    # 低内存模式可以将内存占用从 12GB 降低到 100MB
-    # ====================================================
-    
-    # ==================== 图像路径配置 ====================
-    # 直接输入图像文件夹的绝对路径（请根据实际情况修改）
-    # 
-    # 方式1：直接指定完整路径（推荐）
-    IMAGE_DIR_HOR = r"F:\FSM_horizontal_f0_f150_images"  # 水平条纹图像文件夹
-    IMAGE_DIR_VER = r"F:\FSM_vertical_f0_f150_images"  # 垂直条纹图像文件夹
-    OUTPUT_DIR = r"D:\在校学习\fsa\results\fsa_decode"    # 输出结果文件夹
-    
-    # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
-    # =====================================================
-    
-    # 处理参数
-    BLOCK_SIZE = 100  # 分块处理大小
-    USE_CACHE = True  # 是否使用缓存（禁用缓存可避免大文件保存导致的内存错误）
-    VERIFY_SEQUENCE = True  # 是否验证图像序列顺序
-    
-    # ==================== 内存模式选择 ====================
-    # 🔥 LOW_MEMORY_MODE: 低内存模式开关
-    # 
-    # True  (低内存模式):
-    #   - 内存占用: 约 100MB
-    #   - 速度: 较慢（约需 10-30 分钟）
-    #   - 适用: 内存 < 12GB 的系统
-    #   - 推荐: 如果遇到内存错误，请设为 True
-    #
-    # False (标准模式):
-    #   - 内存占用: 约 12GB
-    #   - 速度: 快（约需 1-3 分钟）
-    #   - 适用: 内存 ≥ 16GB 的系统
-    #
-    LOW_MEMORY_MODE = False  #  内存不足时必须设为 True
-    # ====================================================
-    
-    # ==================== 频谱分析参数 ====================
-    #  SPECTRUM_POINT: 频谱分析点坐标
-    # 
-    # 用途：指定一个像素点，解码器会保存该点的完整DFT频谱
-    # 格式：(x, y) 或 None
-    # 
-    # 示例：
-    #   SPECTRUM_POINT = (1200, 1000)  # 分析像素(1200, 1000)的频谱
-    #   SPECTRUM_POINT = None          # 不进行频谱分析
-    #
-    # 频谱数据将帮助您理解：
-    #   - DFT变换后的完整频谱分布（1920个值）
-    #   - 所有可能的投影仪列位置（所有峰值）
-    #   - 为什么选择某个特定的列作为对应关系
-    #
-    SPECTRUM_POINT = (1200, 1000)  # 设为None则不进行频谱分析
-    # ====================================================
-    
-    # ==================================================
+    # 使用传入的参数
+    PROJECTOR_WIDTH = projector_width
+    PROJECTOR_HEIGHT = projector_height
+    NUM_FREQUENCIES = num_frequencies
+    DECODE_DIRECTION = decode_direction
+    IMAGE_DIR_HOR = image_dir_hor
+    IMAGE_DIR_VER = image_dir_ver
+    OUTPUT_DIR = output_dir
+    BLOCK_SIZE = block_size
+    USE_CACHE = use_cache
+    VERIFY_SEQUENCE = verify_sequence
+    LOW_MEMORY_MODE = low_memory_mode
+    SPECTRUM_POINT = spectrum_point
     
     # 验证配置
     if DECODE_DIRECTION not in ["both", "ver", "hor"]:
@@ -845,4 +813,95 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("程序结束")
     print("="*80)
+
+
+def main():
+    """
+    主函数
+    
+    ============================================================================
+    📋 配置说明：所有可配置参数都在下方，修改后直接运行即可
+    ============================================================================
+    """
+    
+    # ========================================================================
+    # 🔧 配置参数区域 - 在这里修改所有参数
+    # ========================================================================
+    
+    # -------------------- 1. 投影仪参数 --------------------
+    PROJECTOR_WIDTH = 1920      # 投影仪宽度（像素）
+    PROJECTOR_HEIGHT = 1080     # 投影仪高度（像素）
+    
+    # -------------------- 2. FSA采集参数 --------------------
+    NUM_FREQUENCIES = 151       # 采集的频率数量（M值）
+                                # 注意：总图像数 = NUM_FREQUENCIES × 4 (四步相移)
+    
+    # -------------------- 3. 解码方向选择 --------------------
+    # 控制解码哪个方向：
+    # - "both": 解码两个方向（水平+垂直），获得完整的2D对应关系
+    # - "ver" : 仅解码垂直条纹（获取投影仪列坐标/X坐标）
+    # - "hor" : 仅解码水平条纹（获取投影仪行坐标/Y坐标）
+    DECODE_DIRECTION = "both"   # 可选: "both", "ver", "hor"
+    
+    # -------------------- 4. 图像路径配置 --------------------
+    # 请根据实际情况修改以下路径
+    IMAGE_DIR_HOR = r"F:\FSM_horizontal_f0_f150_images"  # 水平条纹图像文件夹
+    IMAGE_DIR_VER = r"F:\FSM_vertical_f0_f150_images"    # 垂直条纹图像文件夹
+    OUTPUT_DIR = r"D:\在校学习\fsa\results\fsa_decode"  # 输出结果文件夹
+    # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
+    
+    # -------------------- 5. 处理参数 --------------------
+    BLOCK_SIZE = 100            # 分块处理大小
+    USE_CACHE = True            # 是否使用缓存（加速重复加载）
+    VERIFY_SEQUENCE = True      # 是否验证图像序列顺序
+    
+    # -------------------- 6. 内存模式选择 --------------------
+    # 🔥 LOW_MEMORY_MODE: 低内存模式开关
+    # 
+    # False (标准模式 - 推荐):
+    #   - 内存占用: 约 12GB
+    #   - 速度: 快（约需 1-3 分钟）
+    #   - 适用: 内存 ≥ 16GB 的系统
+    #
+    # True (低内存模式):
+    #   - 内存占用: 约 100MB
+    #   - 速度: 较慢（约需 10-30 分钟）
+    #   - 适用: 内存 < 12GB 的系统
+    #   - 推荐: 如果遇到内存错误，请设为 True
+    #
+    LOW_MEMORY_MODE = False     # 内存不足时设为 True
+    
+    # -------------------- 7. 频谱分析参数 --------------------
+    # 用途：指定一个像素点，解码器会保存该点的完整DFT频谱
+    # 格式：(x, y) 或 None
+    # 
+    # 示例：
+    #   SPECTRUM_POINT = (1200, 1000)  # 分析像素(1200, 1000)的频谱
+    #   SPECTRUM_POINT = None          # 不进行频谱分析
+    #
+    SPECTRUM_POINT = (1200, 1000)  # 设为None则不进行频谱分析
+    
+    # ========================================================================
+    # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改
+    # ========================================================================
+    
+    # 调用解码函数
+    decode_fsa_images(
+        projector_width=PROJECTOR_WIDTH,
+        projector_height=PROJECTOR_HEIGHT,
+        num_frequencies=NUM_FREQUENCIES,
+        decode_direction=DECODE_DIRECTION,
+        image_dir_hor=IMAGE_DIR_HOR,
+        image_dir_ver=IMAGE_DIR_VER,
+        output_dir=OUTPUT_DIR,
+        block_size=BLOCK_SIZE,
+        use_cache=USE_CACHE,
+        verify_sequence=VERIFY_SEQUENCE,
+        low_memory_mode=LOW_MEMORY_MODE,
+        spectrum_point=SPECTRUM_POINT
+    )
+
+
+if __name__ == "__main__":
+    main()
 

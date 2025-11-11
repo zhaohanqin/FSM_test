@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FSA三维重建核心模块
+FSA三维重建核心模块（重构版）
 
 本模块实现了基于频移法（FSA）的三维点云重建功能。
 通过结合相机和投影仪的标定参数以及解码得到的视差图，
@@ -8,11 +8,37 @@ FSA三维重建核心模块
 
 主要功能：
 1. 读取相机和投影仪的标定结果
-2. 从视差图重建三维点云
-3. 点云可视化和保存
+2. 读取点对应关系（视差图、峰值图）
+3. 执行三角测量进行三维重建
+4. 点云可视化和保存
 
-作者：基于 reconstruct_fsa.py 提取
-日期：2025-11-07
+重构说明（2025-11-09）：
+------------------------
+为了提高代码的可读性和可维护性，将原有功能细分为以下专门的类：
+
+1. **CalibrationReader** - 标定文件读取器
+   负责读取和解析标定结果文件
+
+2. **CorrespondenceReader** - 点对应关系读取器（新增）
+   负责读取视差图和峰值图，管理相机-投影仪像素对应关系
+
+3. **TriangulationEngine** - 三角测量引擎（新增）
+   负责执行三角测量的核心算法，包括去畸变、投影矩阵构建、三角测量计算
+
+4. **PointCloudProcessor** - 点云处理器（新增）
+   负责点云的保存和可视化功能
+
+5. **FSAReconstructor** - 三维重建协调器（重构）
+   整合上述组件，提供统一的重建接口，保持向后兼容性
+
+这种设计使得：
+- 代码职责更加清晰
+- 每个类专注于单一功能
+- 便于测试和维护
+- 易于扩展新功能
+
+作者：基于 reconstruct_fsa.py 提取并重构
+日期：2025-11-07（初版），2025-11-09（重构）
 """
 
 import numpy as np
@@ -165,9 +191,412 @@ class CalibrationReader:
         print(f"[OK] 投影仪标定文件已保存: {projector_output_path}")
 
 
+class CorrespondenceReader:
+    """
+    点对应关系读取器
+    
+    负责读取和管理相机像素与投影仪像素之间的对应关系。
+    这些对应关系通常由FSA解码过程生成，包括：
+    - 视差图（disparity maps）：记录每个相机像素对应的投影仪坐标
+    - 峰值图（peak maps）：记录解码质量/置信度
+    
+    重构说明：
+    --------
+    将点对应关系的读取功能从FSAReconstructor中分离出来，
+    使代码职责更加清晰，便于维护和扩展。
+    """
+    
+    @staticmethod
+    def load_correspondence_data(disparity_hor_path: str = None,
+                                disparity_ver_path: str = None,
+                                peak_hor_path: str = None,
+                                peak_ver_path: str = None,
+                                disparity_hor: np.ndarray = None,
+                                disparity_ver: np.ndarray = None,
+                                peak_hor: np.ndarray = None,
+                                peak_ver: np.ndarray = None) -> Dict:
+        """
+        加载点对应关系数据
+        
+        可以从文件路径加载，也可以直接传入numpy数组
+        
+        Parameters:
+        -----------
+        disparity_hor_path : str, optional
+            水平视差图文件路径（.npy格式）
+        disparity_ver_path : str, optional
+            垂直视差图文件路径（.npy格式）
+        peak_hor_path : str, optional
+            水平峰值图文件路径（.npy格式）
+        peak_ver_path : str, optional
+            垂直峰值图文件路径（.npy格式）
+        disparity_hor : np.ndarray, optional
+            水平视差图数组
+        disparity_ver : np.ndarray, optional
+            垂直视差图数组
+        peak_hor : np.ndarray, optional
+            水平峰值图数组
+        peak_ver : np.ndarray, optional
+            垂直峰值图数组
+            
+        Returns:
+        --------
+        correspondence_data : dict
+            包含视差图和峰值图的字典，键包括：
+            - 'disparity_hor': 水平视差图
+            - 'disparity_ver': 垂直视差图
+            - 'peak_hor': 水平峰值图（可选）
+            - 'peak_ver': 垂直峰值图（可选）
+        """
+        print("\n" + "="*60)
+        print("加载点对应关系数据")
+        print("="*60)
+        
+        correspondence_data = {}
+        
+        # 加载水平视差图
+        if disparity_hor is not None:
+            correspondence_data['disparity_hor'] = disparity_hor
+            print(f"  水平视差图: 从数组加载，形状 {disparity_hor.shape}")
+        elif disparity_hor_path is not None:
+            correspondence_data['disparity_hor'] = np.load(disparity_hor_path)
+            print(f"  水平视差图: {disparity_hor_path}")
+            print(f"    形状: {correspondence_data['disparity_hor'].shape}")
+        
+        # 加载垂直视差图
+        if disparity_ver is not None:
+            correspondence_data['disparity_ver'] = disparity_ver
+            print(f"  垂直视差图: 从数组加载，形状 {disparity_ver.shape}")
+        elif disparity_ver_path is not None:
+            correspondence_data['disparity_ver'] = np.load(disparity_ver_path)
+            print(f"  垂直视差图: {disparity_ver_path}")
+            print(f"    形状: {correspondence_data['disparity_ver'].shape}")
+        
+        # 加载水平峰值图
+        if peak_hor is not None:
+            correspondence_data['peak_hor'] = peak_hor
+            print(f"  水平峰值图: 从数组加载，形状 {peak_hor.shape}")
+        elif peak_hor_path is not None:
+            correspondence_data['peak_hor'] = np.load(peak_hor_path)
+            print(f"  水平峰值图: {peak_hor_path}")
+            print(f"    形状: {correspondence_data['peak_hor'].shape}")
+        
+        # 加载垂直峰值图
+        if peak_ver is not None:
+            correspondence_data['peak_ver'] = peak_ver
+            print(f"  垂直峰值图: 从数组加载，形状 {peak_ver.shape}")
+        elif peak_ver_path is not None:
+            correspondence_data['peak_ver'] = np.load(peak_ver_path)
+            print(f"  垂直峰值图: {peak_ver_path}")
+            print(f"    形状: {correspondence_data['peak_ver'].shape}")
+        
+        print("[OK] 点对应关系数据加载完成")
+        print("="*60)
+        return correspondence_data
+
+
+class TriangulationEngine:
+    """
+    三角测量引擎
+    
+    负责执行三维重建的核心算法：
+    1. 根据相机-投影仪像素对应关系
+    2. 结合标定参数（内参、外参）
+    3. 通过三角测量计算三维坐标
+    
+    原理说明：
+    --------
+    对于相机像素 (xc, yc) 和对应的投影仪像素 (xp, yp)：
+    1. 去畸变得到归一化坐标
+    2. 构建相机和投影仪的投影矩阵
+    3. 使用三角测量求解三维点坐标
+    
+    重构说明：
+    --------
+    将三角测量的核心算法从FSAReconstructor中分离出来，
+    使三维重建的数学计算逻辑更加清晰和独立。
+    """
+    
+    def __init__(self,
+                 camera_matrix: np.ndarray,
+                 camera_dist: np.ndarray,
+                 projector_matrix: np.ndarray,
+                 projector_dist: np.ndarray,
+                 R: np.ndarray,
+                 T: np.ndarray,
+                 proj_width: int,
+                 proj_height: int):
+        """
+        初始化三角测量引擎
+        
+        Parameters:
+        -----------
+        camera_matrix : np.ndarray
+            相机内参矩阵 (3x3)
+        camera_dist : np.ndarray
+            相机畸变系数
+        projector_matrix : np.ndarray
+            投影仪内参矩阵 (3x3)
+        projector_dist : np.ndarray
+            投影仪畸变系数
+        R : np.ndarray
+            旋转矩阵 (3x3)，投影仪相对于相机
+        T : np.ndarray
+            平移向量 (3x1)，投影仪相对于相机
+        proj_width : int
+            投影仪宽度
+        proj_height : int
+            投影仪高度
+        """
+        self.camera_matrix = camera_matrix
+        self.camera_dist = camera_dist
+        self.projector_matrix = projector_matrix
+        self.projector_dist = projector_dist
+        self.R = R
+        self.T = T
+        self.proj_width = proj_width
+        self.proj_height = proj_height
+    
+    def triangulate_from_correspondences(self,
+                                        camera_pixels: np.ndarray,
+                                        projector_pixels: np.ndarray) -> np.ndarray:
+        """
+        从像素对应关系执行三角测量
+        
+        Parameters:
+        -----------
+        camera_pixels : np.ndarray
+            相机像素坐标，形状 (N, 2)
+        projector_pixels : np.ndarray
+            投影仪像素坐标，形状 (N, 2)
+            
+        Returns:
+        --------
+        points_3d : np.ndarray
+            三维点坐标（相机坐标系），形状 (N, 3)
+        """
+        # 1. 去畸变
+        camera_undistorted = cv2.undistortPoints(
+            camera_pixels.astype(np.float32),
+            self.camera_matrix,
+            self.camera_dist,
+            P=self.camera_matrix
+        ).reshape(-1, 2)
+        
+        projector_undistorted = cv2.undistortPoints(
+            projector_pixels.astype(np.float32),
+            self.projector_matrix,
+            self.projector_dist,
+            P=self.projector_matrix
+        ).reshape(-1, 2)
+        
+        # 2. 构建投影矩阵
+        P_camera = np.hstack([np.eye(3), np.zeros((3, 1))])
+        P_camera = self.camera_matrix @ P_camera
+        
+        P_projector = np.hstack([self.R, self.T])
+        P_projector = self.projector_matrix @ P_projector
+        
+        # 3. 三角测量
+        points_4d = cv2.triangulatePoints(
+            P_camera, P_projector,
+            camera_undistorted.T, projector_undistorted.T
+        )
+        
+        # 4. 转换为3D坐标（齐次坐标转笛卡尔坐标）
+        points_3d = (points_4d[:3] / points_4d[3]).T
+        
+        return points_3d
+    
+    def transform_to_projector_frame(self, points_3d_camera: np.ndarray) -> np.ndarray:
+        """
+        将点云从相机坐标系转换到投影仪坐标系
+        
+        Parameters:
+        -----------
+        points_3d_camera : np.ndarray
+            相机坐标系下的三维点，形状 (N, 3)
+            
+        Returns:
+        --------
+        points_3d_projector : np.ndarray
+            投影仪坐标系下的三维点，形状 (N, 3)
+        """
+        # 投影仪坐标系 = R^T @ (相机坐标系 - T)
+        points_3d_projector = (self.R.T @ (points_3d_camera - self.T.flatten()).T).T
+        return points_3d_projector
+
+
+class PointCloudProcessor:
+    """
+    点云处理器
+    
+    负责点云的保存和可视化功能。
+    
+    重构说明：
+    --------
+    将点云的后处理功能（保存、可视化）从FSAReconstructor中分离出来，
+    使代码职责更加清晰，便于扩展其他点云处理功能。
+    """
+    
+    @staticmethod
+    def save_pointcloud(point_cloud: np.ndarray,
+                       point_color: np.ndarray,
+                       output_path: str):
+        """
+        保存点云为PLY格式
+        
+        Parameters:
+        -----------
+        point_cloud : np.ndarray
+            点云数据，形状 (N, 3)
+        point_color : np.ndarray
+            点云颜色，形状 (N, 3)，RGB格式
+        output_path : str
+            输出文件路径
+        """
+        try:
+            import open3d as o3d
+            
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(point_cloud)
+            pcd.colors = o3d.utility.Vector3dVector(point_color / 255.0)
+            
+            o3d.io.write_point_cloud(output_path, pcd)
+            print(f"\n[OK] 点云已保存: {output_path}")
+            
+        except ImportError:
+            print("[!] 警告: 未安装open3d库，使用简化的PLY保存方法")
+            PointCloudProcessor._save_ply_simple(point_cloud, point_color, output_path)
+    
+    @staticmethod
+    def _save_ply_simple(point_cloud: np.ndarray,
+                        point_color: np.ndarray,
+                        output_path: str):
+        """
+        简化的PLY保存方法（不依赖open3d）
+        
+        Parameters:
+        -----------
+        point_cloud : np.ndarray
+            点云数据
+        point_color : np.ndarray
+            点云颜色
+        output_path : str
+            输出文件路径
+        """
+        with open(output_path, 'w') as f:
+            # 写入PLY文件头
+            f.write("ply\n")
+            f.write("format ascii 1.0\n")
+            f.write(f"element vertex {len(point_cloud)}\n")
+            f.write("property float x\n")
+            f.write("property float y\n")
+            f.write("property float z\n")
+            f.write("property uchar red\n")
+            f.write("property uchar green\n")
+            f.write("property uchar blue\n")
+            f.write("end_header\n")
+            
+            # 写入点云数据
+            for i in range(len(point_cloud)):
+                x, y, z = point_cloud[i]
+                r, g, b = point_color[i].astype(np.uint8)
+                f.write(f"{x} {y} {z} {r} {g} {b}\n")
+        
+        print(f"\n[OK] 点云已保存（简化格式）: {output_path}")
+    
+    @staticmethod
+    def visualize_pointcloud(point_cloud: np.ndarray,
+                            point_color: np.ndarray,
+                            window_name: str = "FSA Point Cloud"):
+        """
+        使用Open3D可视化点云
+        
+        Parameters:
+        -----------
+        point_cloud : np.ndarray
+            点云数据，形状 (N, 3)
+        point_color : np.ndarray
+            点云颜色，形状 (N, 3)，RGB格式
+        window_name : str
+            窗口名称
+        """
+        try:
+            import open3d as o3d
+            
+            print(f"\n启动Open3D可视化...")
+            print(f"  点云数量: {len(point_cloud):,}")
+            
+            if len(point_cloud) == 0:
+                print("❌ 错误: 点云为空，无法可视化")
+                return
+            
+            # 创建点云对象
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(point_cloud)
+            
+            # 处理颜色
+            if point_color is not None and len(point_color) > 0:
+                if point_color.max() > 1.0:
+                    point_color_normalized = point_color / 255.0
+                else:
+                    point_color_normalized = point_color
+                pcd.colors = o3d.utility.Vector3dVector(point_color_normalized)
+            else:
+                print("  警告: 点云没有颜色信息，使用默认灰色")
+                pcd.paint_uniform_color([0.5, 0.5, 0.5])  # 灰色 RGB(0.5, 0.5, 0.5)
+            
+            # 如果点云数量太大，进行下采样
+            original_count = len(pcd.points)
+            if original_count > 1000000:
+                center = point_cloud.mean(axis=0)
+                extent = point_cloud.max(axis=0) - point_cloud.min(axis=0)
+                max_extent = extent.max()
+                
+                print(f"  点云数量较大 ({original_count:,})，进行下采样...")
+                voxel_size = max_extent / 500
+                pcd = pcd.voxel_down_sample(voxel_size)
+                print(f"  下采样后点云数量: {len(pcd.points):,}")
+            
+            print(f"  准备显示 {len(pcd.points):,} 个点")
+            
+            # 创建可视化器
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(window_name=window_name, width=1280, height=720, visible=True)
+            vis.add_geometry(pcd)
+            
+            # 设置渲染选项
+            render_option = vis.get_render_option()
+            render_option.background_color = np.array([0.1, 0.1, 0.1])
+            render_option.point_size = 2.0
+            render_option.show_coordinate_frame = True
+            
+            print("\n可视化操作提示:")
+            print("  - 鼠标左键拖动: 旋转视角")
+            print("  - 鼠标右键拖动: 平移视角")
+            print("  - 滚轮: 缩放")
+            print("  - 按 Q 键或关闭窗口: 退出")
+            print("\n正在显示点云窗口...")
+            
+            # 运行可视化
+            vis.run()
+            vis.destroy_window()
+            
+            print("✓ 可视化窗口已关闭")
+            
+        except ImportError:
+            print("[ERROR] 错误: 未安装open3d库，无法进行可视化")
+            print("   请运行: pip install open3d")
+        except Exception as e:
+            print(f"❌ 可视化错误: {e}")
+            import traceback
+            traceback.print_exc()
+
+
 class FSAReconstructor:
     """
-    FSA三维重建器
+    FSA三维重建协调器（重构版）
     
     原理说明：
     --------
@@ -178,11 +607,22 @@ class FSAReconstructor:
     1. 对于相机图像中的每个像素 (xc, yc)
     2. 通过视差图得到对应的投影仪坐标 (xp, yp)
     3. 利用三角测量原理计算该点的三维坐标 (X, Y, Z)
+    
+    重构说明：
+    --------
+    本类现在作为协调器，整合以下专门的功能类：
+    - CalibrationReader: 读取标定文件
+    - CorrespondenceReader: 读取点对应关系（视差图、峰值图）
+    - TriangulationEngine: 执行三角测量和三维重建
+    - PointCloudProcessor: 保存和可视化点云
+    
+    这种设计使得代码结构更清晰，职责分离，便于维护和扩展。
+    同时保持了原有的API接口，确保向后兼容性。
     """
     
     def __init__(self, 
-                 camera_calib_path: str,
-                 projector_calib_path: str,
+                 calibration_file: str,
+                 camera_image_size: Tuple[int, int] = (2448, 2048),
                  projector_width: int = 1920,
                  projector_height: int = 1080):
         """
@@ -190,36 +630,73 @@ class FSAReconstructor:
         
         Parameters:
         -----------
-        camera_calib_path : str
-            相机标定文件路径（.npz格式）
-        projector_calib_path : str
-            投影仪标定文件路径（.npz格式）
+        calibration_file : str
+            标定结果文件路径（.txt格式，如"标定结果.txt"）
+        camera_image_size : tuple
+            相机图像尺寸 (width, height)，默认为 (2448, 2048)
         projector_width : int
-            投影仪宽度
+            投影仪宽度，默认为 1920
         projector_height : int
-            投影仪高度
+            投影仪高度，默认为 1080
         """
         self.proj_width = projector_width
         self.proj_height = projector_height
-                # 加载标定数据
-        print("\n加载标定数据...")
-        self._load_calibration(camera_calib_path, projector_calib_path)
-    
-    def _load_calibration(self, camera_calib_path: str, projector_calib_path: str):
-        """加载标定数据"""
-        # 加载相机标定
-        cam_data = np.load(camera_calib_path)
-        self.camera_matrix = cam_data['camera_matrix']
-        self.camera_dist = cam_data['dist_coeffs']
+        self.camera_image_size = camera_image_size
         
-        # 加载投影仪标定
-        proj_data = np.load(projector_calib_path)
-        self.projector_matrix = proj_data['camera_matrix']
-        self.projector_dist = proj_data['dist_coeffs']
-        self.R = proj_data['rotation_matrix']
-        self.T = proj_data['translation_vector']
+        # 加载标定数据
+        print("\n加载标定数据...")
+        self._load_calibration_from_txt(calibration_file)
+    
+    def _load_calibration_from_txt(self, calibration_file: str):
+        """
+        直接从标定结果.txt文件读取标定数据
+        
+        Parameters:
+        -----------
+        calibration_file : str
+            标定结果文件路径
+        """
+        # 读取标定文件
+        calib_data = CalibrationReader.read_calibration_file(calibration_file)
+        
+        # 提取相机参数
+        cam = calib_data['camera']
+        self.camera_matrix = np.array([
+            [cam['fx'], 0, cam['cx']],
+            [0, cam['fy'], cam['cy']],
+            [0, 0, 1]
+        ])
+        self.camera_dist = np.array([cam['k1'], cam['k2'], cam['p1'], cam['p2'], 0])
+        
+        # 提取投影仪参数
+        proj = calib_data['projector']
+        self.projector_matrix = np.array([
+            [proj['fx'], 0, proj['cx']],
+            [0, proj['fy'], proj['cy']],
+            [0, 0, 1]
+        ])
+        self.projector_dist = np.array([proj['k1'], proj['k2'], proj['p1'], proj['p2'], 0])
+        
+        # 提取旋转矩阵和平移向量
+        self.R = calib_data['rotation_matrix']
+        self.T = calib_data['translation'].reshape(3, 1)
+        
+        # 创建三角测量引擎
+        self.triangulation_engine = TriangulationEngine(
+            camera_matrix=self.camera_matrix,
+            camera_dist=self.camera_dist,
+            projector_matrix=self.projector_matrix,
+            projector_dist=self.projector_dist,
+            R=self.R,
+            T=self.T,
+            proj_width=self.proj_width,
+            proj_height=self.proj_height
+        )
         
         print("[OK] 标定数据加载成功")
+        print(f"  相机图像尺寸: {self.camera_image_size}")
+        print(f"  投影仪分辨率: {self.proj_width} x {self.proj_height}")
+        print(f"  三角测量引擎已初始化")
     
     def _reconstruct_pointcloud(self,
                                    disparity_hor: np.ndarray,
@@ -528,45 +1005,8 @@ class FSAReconstructor:
         output_path : str
             输出文件路径
         """
-        try:
-            import open3d as o3d
-            
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(point_cloud)
-            pcd.colors = o3d.utility.Vector3dVector(point_color / 255.0)
-            
-            o3d.io.write_point_cloud(output_path, pcd)
-            print(f"\n[OK] 点云已保存: {output_path}")
-            
-        except ImportError:
-            print("[!] 警告: 未安装open3d库，使用简化的PLY保存方法")
-            self._save_ply_simple(point_cloud, point_color, output_path)
-    
-    def _save_ply_simple(self,
-                        point_cloud: np.ndarray,
-                        point_color: np.ndarray,
-                        output_path: str):
-        """简化的PLY保存方法（不依赖open3d）"""
-        with open(output_path, 'w') as f:
-            # 写入PLY文件头
-            f.write("ply\n")
-            f.write("format ascii 1.0\n")
-            f.write(f"element vertex {len(point_cloud)}\n")
-            f.write("property float x\n")
-            f.write("property float y\n")
-            f.write("property float z\n")
-            f.write("property uchar red\n")
-            f.write("property uchar green\n")
-            f.write("property uchar blue\n")
-            f.write("end_header\n")
-            
-            # 写入点云数据
-            for i in range(len(point_cloud)):
-                x, y, z = point_cloud[i]
-                r, g, b = point_color[i].astype(np.uint8)
-                f.write(f"{x} {y} {z} {r} {g} {b}\n")
-        
-        print(f"\n[OK] 点云已保存（简化格式）: {output_path}")
+        # 使用PointCloudProcessor保存点云
+        PointCloudProcessor.save_pointcloud(point_cloud, point_color, output_path)
     
     def visualize_pointcloud(self,
                             point_cloud: np.ndarray,
@@ -584,155 +1024,8 @@ class FSAReconstructor:
         window_name : str
             窗口名称
         """
-        try:
-            import open3d as o3d
-            
-            print(f"\n启动Open3D可视化...")
-            print(f"  点云数量: {len(point_cloud):,}")
-            
-            # 检查点云数据
-            if len(point_cloud) == 0:
-                print("❌ 错误: 点云为空，无法可视化")
-                return
-            
-            # 计算点云统计信息
-            center = point_cloud.mean(axis=0)
-            min_bound = point_cloud.min(axis=0)
-            max_bound = point_cloud.max(axis=0)
-            extent = max_bound - min_bound
-            max_extent = extent.max()
-            
-            print(f"  点云中心: ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f}) mm")
-            print(f"  点云范围: X[{min_bound[0]:.2f}, {max_bound[0]:.2f}], "
-                  f"Y[{min_bound[1]:.2f}, {max_bound[1]:.2f}], "
-                  f"Z[{min_bound[2]:.2f}, {max_bound[2]:.2f}] mm")
-            print(f"  最大尺寸: {max_extent:.2f} mm")
-            
-            # 创建点云对象
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(point_cloud)
-            
-            # 处理颜色
-            if point_color is not None and len(point_color) > 0:
-                # 确保颜色值在[0, 1]范围内
-                if point_color.max() > 1.0:
-                    point_color_normalized = point_color / 255.0
-                else:
-                    point_color_normalized = point_color
-                pcd.colors = o3d.utility.Vector3dVector(point_color_normalized)
-                color_min = point_color_normalized.min()
-                color_max = point_color_normalized.max()
-                print(f"  颜色范围: [{color_min:.2f}, {color_max:.2f}]")
-                
-                # 如果颜色都是白色或接近白色，使用红色以便可见
-                if color_min > 0.9 and color_max > 0.9:
-                    print("  警告: 点云颜色接近白色，可能不易在白色背景下看到")
-                    print("  建议: 如果看不到点云，尝试旋转视角或检查点云数据")
-            else:
-                # 如果没有颜色，使用默认颜色（红色）
-                print("  警告: 点云没有颜色信息，使用默认红色")
-                pcd.paint_uniform_color([1.0, 0.0, 0.0])
-            
-            # 如果点云数量太大，进行下采样以提高性能
-            original_count = len(pcd.points)
-            if original_count > 1000000:  # 如果超过100万个点
-                print(f"  点云数量较大 ({original_count:,})，进行下采样以提高渲染性能...")
-                # 使用体素下采样
-                voxel_size = max_extent / 500  # 体素大小为点云最大尺寸的1/500
-                pcd_downsampled = pcd.voxel_down_sample(voxel_size)
-                pcd = pcd_downsampled
-                print(f"  下采样后点云数量: {len(pcd.points):,}")
-            
-            # 验证点云是否有效
-            if len(pcd.points) == 0:
-                print("❌ 错误: 点云为空，无法可视化")
-                return
-            
-            print(f"  准备显示 {len(pcd.points):,} 个点")
-            
-            # 创建可视化器
-            vis = o3d.visualization.Visualizer()
-            vis.create_window(window_name=window_name, width=1280, height=720, visible=True)
-            vis.add_geometry(pcd)
-            
-            # 设置渲染选项
-            render_option = vis.get_render_option()
-            render_option.background_color = np.array([0.1, 0.1, 0.1])  # 深灰色背景
-            render_option.point_size = 2.0  # 点大小
-            render_option.show_coordinate_frame = True  # 显示坐标轴
-            
-            # 获取视图控制并设置相机视角
-            view_control = vis.get_view_control()
-            
-            # 更新一次渲染以确保几何体已添加
-            vis.poll_events()
-            vis.update_renderer()
-            
-            # 设置相机参数以包含整个点云
-            # 使用相机参数来设置合适的视角
-            ctr = vis.get_view_control()
-            cam = ctr.convert_to_pinhole_camera_parameters()
-            
-            # 计算合适的相机位置（从斜上方观察点云）
-            # 点云中心在center，我们让相机从斜上方看向中心
-            camera_distance = max_extent * 3.0  # 相机距离
-            
-            # 计算相机位置（从斜上方观察）
-            # 使用球坐标系：从(θ, φ)方向观察点云中心
-            theta = np.pi / 4  # 45度
-            phi = np.pi / 6    # 30度
-            eye_x = center[0] + camera_distance * np.sin(phi) * np.cos(theta)
-            eye_y = center[1] + camera_distance * np.sin(phi) * np.sin(theta)
-            eye_z = center[2] + camera_distance * np.cos(phi)
-            eye = np.array([eye_x, eye_y, eye_z])
-            
-            # 构建look-at矩阵
-            forward = center - eye
-            forward = forward / np.linalg.norm(forward)
-            up = np.array([0, 0, 1])
-            right = np.cross(forward, up)
-            right = right / np.linalg.norm(right)
-            up = np.cross(right, forward)
-            
-            # 构建外参矩阵（世界坐标系到相机坐标系）
-            extrinsic = np.eye(4)
-            extrinsic[0, :3] = right
-            extrinsic[1, :3] = -up  # Open3D使用-Y向上
-            extrinsic[2, :3] = -forward
-            extrinsic[:3, 3] = -extrinsic[:3, :3] @ eye
-            
-            cam.extrinsic = extrinsic
-            ctr.convert_from_pinhole_camera_parameters(cam)
-            
-            # 设置合适的缩放
-            ctr.set_zoom(0.7)
-            
-            # 再次更新渲染
-            vis.poll_events()
-            vis.update_renderer()
-            
-            print("\n可视化操作提示:")
-            print("  - 鼠标左键拖动: 旋转视角")
-            print("  - 鼠标右键拖动: 平移视角")
-            print("  - 滚轮: 缩放")
-            print("  - 按 H 键: 显示帮助")
-            print("  - 按 Q 键或关闭窗口: 退出")
-            print("  - 按 R 键: 重置视角")
-            print("\n正在显示点云窗口...")
-            
-            # 运行可视化
-            vis.run()
-            vis.destroy_window()
-            
-            print("✓ 可视化窗口已关闭")
-            
-        except ImportError:
-            print("[ERROR] 错误: 未安装open3d库，无法进行可视化")
-            print("   请运行: pip install open3d")
-        except Exception as e:
-            print(f"❌ 可视化错误: {e}")
-            import traceback
-            traceback.print_exc()
+        # 使用PointCloudProcessor可视化点云
+        PointCloudProcessor.visualize_pointcloud(point_cloud, point_color, window_name)
     
 
 

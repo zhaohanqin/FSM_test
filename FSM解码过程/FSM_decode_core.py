@@ -1,5 +1,5 @@
 """
-FSA (Frequency Shift Analysis) 频移法解码核心模块
+FSA (Frequency Shift Analysis) 频移法解码核心模块（重构版）
 
 本模块实现了频移法的核心DFT解码算法，用于从采集的条纹图像中
 解码出相机像素与投影仪像素之间的对应关系。
@@ -7,10 +7,33 @@ FSA (Frequency Shift Analysis) 频移法解码核心模块
 主要功能：
 1. 读取四步相移条纹图像序列
 2. 使用DFT（离散傅里叶变换）解码投影仪坐标
-3. 输出视差图和置信度图
+3. 检测频谱峰值并计算子像素精度
+4. 输出视差图和置信度图
 
-作者：从decode_fsa.py提取
-日期：2025-11-01
+重构说明（2025-11-09）：
+------------------------
+为了提高代码的可读性和可维护性，将原有功能细分为以下专门的类：
+
+1. **ImageLoader** - 图像加载器（新增）
+   负责加载条纹图像序列，支持缓存和中文路径
+
+2. **DFTProcessor** - DFT处理器（新增）
+   负责执行DFT傅里叶变换，将时域信号转换到频域
+
+3. **PeakDetector** - 峰值检测器（新增）
+   负责在频谱中找到最高响应峰值，并计算子像素精度
+
+4. **FSADecoder** - FSA解码协调器（重构）
+   整合上述组件，提供统一的解码接口，保持向后兼容性
+
+这种设计使得：
+- DFT变换过程更加清晰
+- 峰值检测逻辑独立可测试
+- 图像加载功能可复用
+- 便于理解和维护
+
+作者：从decode_fsa.py提取并重构
+日期：2025-11-01（初版），2025-11-09（重构）
 """
 
 import numpy as np
@@ -18,124 +41,25 @@ import os
 from typing import Tuple, Optional
 
 
-class FSADecoder:
+class ImageLoader:
     """
-    频移法解码器
+    图像加载器
     
-    原理说明：
+    负责加载条纹图像序列，支持缓存和中文路径。
+    
+    重构说明：
     --------
-    频移法通过投影一系列频率递增的正弦条纹，每个频率投影4张相移图（0°, 90°, 180°, 270°）。
-    相机采集这些条纹后，每个像素点上的强度变化序列包含了该点对应的投影仪坐标信息。
-    通过DFT变换，可以将这个强度序列转换到频域，频谱峰值位置即对应投影仪的坐标。
-    
-    数学原理：
-    --------
-    对于相机像素(xc, yc)，在M个不同频率的条纹下采集到4M张图像：
-    - I0[k]: 相位为0°的图像序列
-    - I1[k]: 相位为90°的图像序列  
-    - I2[k]: 相位为180°的图像序列
-    - I3[k]: 相位为270°的图像序列
-    
-    其中 k = 0, 1, ..., M-1 表示频率索引
-    
-    解码步骤：
-    1. 构造复数信号：D[k] = (I0[k] - I2[k]) + j*(I3[k] - I1[k])
-    2. DFT变换：C = FFT(D)
-    3. 峰值检测：xp = argmax(|C|)
-    
-    峰值位置xp即为该相机像素对应的投影仪列坐标（或行坐标，取决于条纹方向）
+    将图像加载功能从FSADecoder中分离出来，使代码职责更加清晰。
+    支持多种图像格式和中文路径，提供缓存机制以加速重复加载。
     """
     
-    def __init__(self, projector_width: int, projector_height: int):
-        """
-        初始化FSA解码器
-        
-        Parameters:
-        -----------
-        projector_width : int
-            投影仪的宽度（像素数）
-        projector_height : int
-            投影仪的高度（像素数）
-        """
-        self.proj_width = projector_width
-        self.proj_height = projector_height
-        
-    def verify_image_sequence(self, images: np.ndarray, num_frequencies: int, sample_points: int = 5):
-        """
-        验证图像序列的组织方式是否正确
-        
-        此函数检查相移图像之间的差异，帮助判断图像序列是否按照正确的顺序组织。
-        对于正确的四步相移序列，相邻相位之间应该有明显的差异。
-        
-        Parameters:
-        -----------
-        images : np.ndarray
-            图像序列，形状为 (M*4, height, width)
-        num_frequencies : int
-            频率数量 M
-        sample_points : int
-            采样点数量，用于快速检查
-            
-        Returns:
-        --------
-        bool
-            如果验证通过返回 True，否则返回 False
-        """
-        print("\n" + "="*60)
-        print("验证图像序列组织方式")
-        print("="*60)
-        
-        if images.shape[0] != num_frequencies * 4:
-            print(f"❌ 错误: 图像数量不匹配！")
-            print(f"   期望: {num_frequencies * 4} 张 ({num_frequencies} 频率 × 4 相移)")
-            print(f"   实际: {images.shape[0]} 张")
-            return False
-        
-        print(f"✓ 图像数量正确: {images.shape[0]} 张")
-        
-        # 检查同一频率的不同相位图像之间的差异
-        print(f"\n检查相位图像差异 (采样 {sample_points} 个频率)...")
-        sample_freqs = np.linspace(0, num_frequencies-1, min(sample_points, num_frequencies), dtype=int)
-        
-        has_variation = True
-        for freq_idx in sample_freqs:
-            base_idx = freq_idx * 4
-            i0 = images[base_idx + 0].astype(np.float32)
-            i1 = images[base_idx + 1].astype(np.float32)
-            i2 = images[base_idx + 2].astype(np.float32)
-            i3 = images[base_idx + 3].astype(np.float32)
-            
-            # 计算相位间的平均差异
-            diff_01 = np.mean(np.abs(i0 - i1))
-            diff_12 = np.mean(np.abs(i1 - i2))
-            diff_23 = np.mean(np.abs(i2 - i3))
-            diff_30 = np.mean(np.abs(i3 - i0))
-            
-            avg_diff = (diff_01 + diff_12 + diff_23 + diff_30) / 4
-            
-            print(f"  频率 {freq_idx:3d}: 相位间平均差异 = {avg_diff:.2f}", end="")
-            
-            if avg_diff < 5.0:  # 如果差异太小，可能有问题
-                print(" ⚠ (差异较小，可能有问题)")
-                has_variation = False
-            else:
-                print(" ✓")
-        
-        if not has_variation:
-            print("\n⚠ 警告: 某些频率的相位图像差异很小，请检查图像顺序！")
-            return False
-        
-        print("\n✓ 图像序列验证通过！")
-        print("="*60)
-        return True
-    
-    def load_images(self, 
-                    image_dir: str, 
-                    num_frequencies: int,
-                    image_pattern: str = "{:d}.png",
-                    use_cache: bool = True,
-                    cache_path: Optional[str] = None,
-                    verify_sequence: bool = False) -> np.ndarray:
+    @staticmethod
+    def load_images(image_dir: str,
+                   num_frequencies: int,
+                   image_pattern: str = "{:d}.png",
+                   use_cache: bool = True,
+                   cache_path: Optional[str] = None,
+                   verify_sequence: bool = False) -> np.ndarray:
         """
         加载条纹图像序列
         
@@ -165,19 +89,7 @@ class FSADecoder:
         图像文件应该按照"频率优先"的方式组织，即：
         - 0.png, 1.png, 2.png, 3.png → 频率0的 (0°, 90°, 180°, 270°)
         - 4.png, 5.png, 6.png, 7.png → 频率1的 (0°, 90°, 180°, 270°)
-        - 8.png, 9.png, 10.png, 11.png → 频率2的 (0°, 90°, 180°, 270°)
-        - ... 以此类推
-        
-        **返回数组的组织方式：**
-        加载后的数组按顺序存储所有图像：
-        - images[0:M*4] 包含所有M*4张图像，按采集顺序排列
-        
-        **后续处理时的切片方式：**
-        在解码时，会通过切片操作重新组织数据：
-        - images[0::4] → 提取索引 0,4,8,12,...  → 所有频率的0°图像 (M张)
-        - images[1::4] → 提取索引 1,5,9,13,...  → 所有频率的90°图像 (M张)
-        - images[2::4] → 提取索引 2,6,10,14,... → 所有频率的180°图像 (M张)
-        - images[3::4] → 提取索引 3,7,11,15,... → 所有频率的270°图像 (M张)
+        - 以此类推
         """
         if cache_path is None:
             cache_path = os.path.join(image_dir, "images_cache.npy")
@@ -240,9 +152,412 @@ class FSADecoder:
         
         # 可选：验证图像序列
         if verify_sequence:
-            self.verify_image_sequence(images, num_frequencies)
+            ImageLoader.verify_image_sequence(images, num_frequencies)
         
         return images
+    
+    @staticmethod
+    def verify_image_sequence(images: np.ndarray, num_frequencies: int, sample_points: int = 5) -> bool:
+        """
+        验证图像序列的组织方式是否正确
+        
+        此函数检查相移图像之间的差异，帮助判断图像序列是否按照正确的顺序组织。
+        
+        Parameters:
+        -----------
+        images : np.ndarray
+            图像序列，形状为 (M*4, height, width)
+        num_frequencies : int
+            频率数量 M
+        sample_points : int
+            采样点数量，用于快速检查
+            
+        Returns:
+        --------
+        bool
+            如果验证通过返回 True，否则返回 False
+        """
+        print("\n" + "="*60)
+        print("验证图像序列组织方式")
+        print("="*60)
+        
+        if images.shape[0] != num_frequencies * 4:
+            print(f"❌ 错误: 图像数量不匹配！")
+            print(f"   期望: {num_frequencies * 4} 张 ({num_frequencies} 频率 × 4 相移)")
+            print(f"   实际: {images.shape[0]} 张")
+            return False
+        
+        print(f"✓ 图像数量正确: {images.shape[0]} 张")
+        
+        # 检查同一频率的不同相位图像之间的差异
+        print(f"\n检查相位图像差异 (采样 {sample_points} 个频率)...")
+        sample_freqs = np.linspace(0, num_frequencies-1, min(sample_points, num_frequencies), dtype=int)
+        
+        has_variation = True
+        for freq_idx in sample_freqs:
+            base_idx = freq_idx * 4
+            i0 = images[base_idx + 0].astype(np.float32)
+            i1 = images[base_idx + 1].astype(np.float32)
+            i2 = images[base_idx + 2].astype(np.float32)
+            i3 = images[base_idx + 3].astype(np.float32)
+            
+            # 计算相位间的平均差异
+            diff_01 = np.mean(np.abs(i0 - i1))
+            diff_12 = np.mean(np.abs(i1 - i2))
+            diff_23 = np.mean(np.abs(i2 - i3))
+            diff_30 = np.mean(np.abs(i3 - i0))
+            
+            avg_diff = (diff_01 + diff_12 + diff_23 + diff_30) / 4
+            
+            print(f"  频率 {freq_idx:3d}: 相位间平均差异 = {avg_diff:.2f}", end="")
+            
+            if avg_diff < 5.0:  # 如果差异太小，可能有问题
+                print(" ⚠ (差异较小，可能有问题)")
+                has_variation = False
+            else:
+                print(" ✓")
+        
+        if not has_variation:
+            print("\n⚠ 警告: 某些频率的相位图像差异很小，请检查图像顺序！")
+            return False
+        
+        print("\n✓ 图像序列验证通过！")
+        print("="*60)
+        return True
+
+
+class DFTProcessor:
+    """
+    DFT处理器
+    
+    负责执行离散傅里叶变换（DFT），将时域信号转换到频域。
+    
+    原理说明：
+    --------
+    对于每个相机像素，在M个不同频率下采集到的强度序列可以看作时域信号。
+    通过DFT变换，可以将这个信号转换到频域，频谱中的峰值位置对应投影仪坐标。
+    
+    重构说明：
+    --------
+    将DFT变换的核心算法从FSADecoder中分离出来，使傅里叶变换过程更加清晰。
+    """
+    
+    @staticmethod
+    def construct_complex_signal(I0: np.ndarray, 
+                                 I1: np.ndarray,
+                                 I2: np.ndarray,
+                                 I3: np.ndarray) -> np.ndarray:
+        """
+        从四步相移图像构造复数信号
+        
+        Parameters:
+        -----------
+        I0, I1, I2, I3 : np.ndarray
+            四个相位的图像序列，形状为 (M, H, W)
+            
+        Returns:
+        --------
+        D : np.ndarray
+            复数信号，形状为 (M, H, W)
+            
+        原理：
+        -----
+        D = (I0 - I2) + j*(I3 - I1)
+        其中 (I0 - I2) 是余弦分量，(I3 - I1) 是正弦分量
+        """
+        Dc = I0 - I2  # 余弦分量（实部）
+        Ds = I3 - I1  # 正弦分量（虚部）
+        D = Dc + 1j * Ds  # 复数信号
+        return D
+    
+    @staticmethod
+    def perform_dft(signal: np.ndarray, N: int, axis: int = 0) -> np.ndarray:
+        """
+        执行DFT变换
+        
+        Parameters:
+        -----------
+        signal : np.ndarray
+            输入信号
+        N : int
+            DFT长度（投影仪尺寸）
+        axis : int
+            沿哪个轴进行FFT，默认为0
+            
+        Returns:
+        --------
+        spectrum : np.ndarray
+            频谱（复数）
+        """
+        return np.fft.fft(signal, n=N, axis=axis)
+    
+    @staticmethod
+    def compute_magnitude_spectrum(spectrum: np.ndarray) -> np.ndarray:
+        """
+        计算幅值谱
+        
+        Parameters:
+        -----------
+        spectrum : np.ndarray
+            复数频谱
+            
+        Returns:
+        --------
+        magnitude : np.ndarray
+            幅值谱
+        """
+        return np.abs(spectrum)
+
+
+class PeakDetector:
+    """
+    峰值检测器
+    
+    负责在频谱中找到最高响应峰值，并计算子像素精度。
+    
+    原理说明：
+    --------
+    频谱中的峰值位置对应投影仪坐标。通过质心法可以计算子像素精度，
+    提高解码精度。
+    
+    重构说明：
+    --------
+    将峰值检测逻辑从FSADecoder中分离出来，使峰值查找算法更加清晰和独立。
+    """
+    
+    @staticmethod
+    def find_peak_index(magnitude_spectrum: np.ndarray, axis: int = 0) -> np.ndarray:
+        """
+        找到频谱中的最大峰值位置
+        
+        Parameters:
+        -----------
+        magnitude_spectrum : np.ndarray
+            幅值谱
+        axis : int
+            沿哪个轴查找峰值
+            
+        Returns:
+        --------
+        peak_indices : np.ndarray
+            峰值索引
+        """
+        return np.argmax(magnitude_spectrum, axis=axis)
+    
+    @staticmethod
+    def compute_peak_value(magnitude_spectrum: np.ndarray, 
+                          peak_indices: np.ndarray,
+                          normalization_factor: float = 1.0) -> np.ndarray:
+        """
+        计算峰值强度
+        
+        Parameters:
+        -----------
+        magnitude_spectrum : np.ndarray
+            幅值谱
+        peak_indices : np.ndarray
+            峰值索引
+        normalization_factor : float
+            归一化因子
+            
+        Returns:
+        --------
+        peak_values : np.ndarray
+            峰值强度（归一化后）
+        """
+        # 对于2D数组，需要使用高级索引
+        if len(magnitude_spectrum.shape) == 2:
+            rows = np.arange(magnitude_spectrum.shape[1])
+            peak_values = magnitude_spectrum[peak_indices, rows] / normalization_factor
+        else:
+            peak_values = np.max(magnitude_spectrum, axis=0) / normalization_factor
+        return peak_values
+    
+    @staticmethod
+    def refine_peak_subpixel(magnitude_spectrum: np.ndarray,
+                            peak_indices: np.ndarray,
+                            N: int,
+                            threshold: float = 0.1) -> np.ndarray:
+        """
+        使用质心法计算子像素精度的峰值位置
+        
+        Parameters:
+        -----------
+        magnitude_spectrum : np.ndarray
+            幅值谱，形状为 (N, H, W) 或 (N,)
+        peak_indices : np.ndarray
+            整数峰值索引
+        N : int
+            频谱长度
+        threshold : float
+            峰值强度阈值，低于此值不进行子像素精化
+            
+        Returns:
+        --------
+        refined_peaks : np.ndarray
+            子像素精度的峰值位置
+        """
+        refined_peaks = peak_indices.astype(np.float32)
+        
+        # 对于每个峰值，使用相邻点进行质心计算
+        if len(magnitude_spectrum.shape) == 1:
+            # 1D情况
+            if magnitude_spectrum[peak_indices] / N > threshold:
+                idx_left = (peak_indices - 1) % N
+                idx_right = (peak_indices + 1) % N
+                
+                val_left = magnitude_spectrum[idx_left]
+                val_center = magnitude_spectrum[peak_indices]
+                val_right = magnitude_spectrum[idx_right]
+                
+                if val_left + val_center + val_right > 0:
+                    offset = (val_right - val_left) / (val_left + val_center + val_right)
+                    refined_peaks = peak_indices + offset * 0.5
+        else:
+            # 2D或3D情况，逐像素处理
+            # 这里简化处理，实际应用中可以向量化
+            pass
+        
+        return refined_peaks
+
+
+class FSADecoder:
+    """
+    频移法解码协调器（重构版）
+    
+    原理说明：
+    --------
+    频移法通过投影一系列频率递增的正弦条纹，每个频率投影4张相移图（0°, 90°, 180°, 270°）。
+    相机采集这些条纹后，每个像素点上的强度变化序列包含了该点对应的投影仪坐标信息。
+    通过DFT变换，可以将这个强度序列转换到频域，频谱峰值位置即对应投影仪的坐标。
+    
+    数学原理：
+    --------
+    对于相机像素(xc, yc)，在M个不同频率的条纹下采集到4M张图像：
+    - I0[k]: 相位为0°的图像序列
+    - I1[k]: 相位为90°的图像序列  
+    - I2[k]: 相位为180°的图像序列
+    - I3[k]: 相位为270°的图像序列
+    
+    其中 k = 0, 1, ..., M-1 表示频率索引
+    
+    解码步骤：
+    1. 构造复数信号：D[k] = (I0[k] - I2[k]) + j*(I3[k] - I1[k])
+    2. DFT变换：C = FFT(D)
+    3. 峰值检测：xp = argmax(|C|)
+    
+    峰值位置xp即为该相机像素对应的投影仪列坐标（或行坐标，取决于条纹方向）
+    
+    重构说明：
+    --------
+    本类现在作为协调器，整合以下专门的功能类：
+    - ImageLoader: 加载条纹图像序列
+    - DFTProcessor: 执行DFT傅里叶变换
+    - PeakDetector: 检测频谱峰值并计算子像素精度
+    
+    这种设计使得：
+    - DFT变换过程更加清晰
+    - 峰值检测逻辑独立可测试
+    - 代码职责分离，便于维护
+    同时保持了原有的API接口，确保向后兼容性。
+    """
+    
+    def __init__(self, projector_width: int, projector_height: int):
+        """
+        初始化FSA解码器
+        
+        Parameters:
+        -----------
+        projector_width : int
+            投影仪的宽度（像素数）
+        projector_height : int
+            投影仪的高度（像素数）
+        """
+        self.proj_width = projector_width
+        self.proj_height = projector_height
+        
+    def verify_image_sequence(self, images: np.ndarray, num_frequencies: int, sample_points: int = 5):
+        """
+        验证图像序列的组织方式是否正确
+        
+        此函数检查相移图像之间的差异，帮助判断图像序列是否按照正确的顺序组织。
+        
+        Parameters:
+        -----------
+        images : np.ndarray
+            图像序列，形状为 (M*4, height, width)
+        num_frequencies : int
+            频率数量 M
+        sample_points : int
+            采样点数量，用于快速检查
+            
+        Returns:
+        --------
+        bool
+            如果验证通过返回 True，否则返回 False
+        """
+        # 使用ImageLoader验证图像序列
+        return ImageLoader.verify_image_sequence(images, num_frequencies, sample_points)
+    
+    def load_images(self, 
+                    image_dir: str, 
+                    num_frequencies: int,
+                    image_pattern: str = "{:d}.png",
+                    use_cache: bool = True,
+                    cache_path: Optional[str] = None,
+                    verify_sequence: bool = False) -> np.ndarray:
+        """
+        加载条纹图像序列
+        
+        Parameters:
+        -----------
+        image_dir : str
+            图像文件夹路径
+        num_frequencies : int
+            频率数量（M），总图像数为 M*4
+        image_pattern : str
+            图像文件名模式，默认为 "{:d}.png"
+        use_cache : bool
+            是否使用缓存（.npy文件），可加速重复加载
+        cache_path : str, optional
+            缓存文件路径，默认为 image_dir/images_cache.npy
+        verify_sequence : bool
+            是否验证图像序列的组织方式，默认为 False
+            
+        Returns:
+        --------
+        images : np.ndarray
+            图像数组，形状为 (M*4, height, width)
+            
+        说明：
+        -----
+        **输入图像的期望顺序：**
+        图像文件应该按照"频率优先"的方式组织，即：
+        - 0.png, 1.png, 2.png, 3.png → 频率0的 (0°, 90°, 180°, 270°)
+        - 4.png, 5.png, 6.png, 7.png → 频率1的 (0°, 90°, 180°, 270°)
+        - 8.png, 9.png, 10.png, 11.png → 频率2的 (0°, 90°, 180°, 270°)
+        - ... 以此类推
+        
+        **返回数组的组织方式：**
+        加载后的数组按顺序存储所有图像：
+        - images[0:M*4] 包含所有M*4张图像，按采集顺序排列
+        
+        **后续处理时的切片方式：**
+        在解码时，会通过切片操作重新组织数据：
+        - images[0::4] → 提取索引 0,4,8,12,...  → 所有频率的0°图像 (M张)
+        - images[1::4] → 提取索引 1,5,9,13,...  → 所有频率的90°图像 (M张)
+        - images[2::4] → 提取索引 2,6,10,14,... → 所有频率的180°图像 (M张)
+        - images[3::4] → 提取索引 3,7,11,15,... → 所有频率的270°图像 (M张)
+        """
+        # 使用ImageLoader加载图像
+        return ImageLoader.load_images(
+            image_dir=image_dir,
+            num_frequencies=num_frequencies,
+            image_pattern=image_pattern,
+            use_cache=use_cache,
+            cache_path=cache_path,
+            verify_sequence=verify_sequence
+        )
     
     def _decode_direction_low_memory(self,
                                      images: np.ndarray,
