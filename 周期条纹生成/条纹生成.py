@@ -205,17 +205,8 @@ def generate_fringe_for_frequency(frequency: float, height: int, width: int,
                 fname_full = f"{file_prefix}{folder_name}_phase0.bmp"
                 img_full.save(os.path.join(dir_full, fname_full), format="BMP")
         
-        # 打印进度信息
-        period_str = f"{1/frequency:.1f}" if frequency > 0 else "∞"
-        save_info = []
-        if save_1d:
-            save_info.append("1D×4")
-        if save_full:
-            if save_full_4phase:
-                save_info.append("Full×4")
-            else:
-                save_info.append("Full×1")
-        print(f"✅ {folder_name:8s} [V] f={frequency:.6f} (f×ck={ck * frequency:.1f}) | 周期={period_str}px | {'+'.join(save_info) if save_info else '无'}")
+        # 计算实际周期（像素数）
+        period_px = 1 / frequency if frequency > 0 else float('inf')
         
     elif direction == 'horizontal':
         # 水平条纹：沿 Y 轴变化，ck = height
@@ -259,20 +250,24 @@ def generate_fringe_for_frequency(frequency: float, height: int, width: int,
                 fname_full = f"{file_prefix}{folder_name}_phase0.bmp"
                 img_full.save(os.path.join(dir_full, fname_full), format="BMP")
         
-        # 打印进度信息
-        period_str = f"{1/frequency:.1f}" if frequency > 0 else "∞"
-        save_info = []
-        if save_1d:
-            save_info.append("1D×4")
-        if save_full:
-            if save_full_4phase:
-                save_info.append("Full×4")
-            else:
-                save_info.append("Full×1")
-        print(f"✅ {folder_name:8s} [H] f={frequency:.6f} (f×ck={ck * frequency:.1f}) | 周期={period_str}px | {'+'.join(save_info) if save_info else '无'}")
+        # 计算实际周期（像素数）
+        period_px = 1 / frequency if frequency > 0 else float('inf')
     
     else:
         raise ValueError(f"不支持的方向: {direction}，请选择 'vertical', 'horizontal' 或 'both'")
+    
+    # 打印进度信息
+    period_str = f"{period_px:.1f}" if period_px != float('inf') else "∞"
+    save_info = []
+    if save_1d:
+        save_info.append("1D×4")
+    if save_full:
+        if save_full_4phase:
+            save_info.append("Full×4")
+        else:
+            save_info.append("Full×1")
+    
+    print(f"✅ {folder_name:8s} [{direction[0].upper()}] f={frequency:.6f} (f×ck={f_ck_value:.1f}) | 周期={period_str:8s}px | 保存: {'+'.join(save_info) if save_info else '无'}")
 
 
 if __name__ == "__main__":
@@ -380,10 +375,12 @@ if __name__ == "__main__":
         print(f"   (周期随频率增加而减小，条纹变密集)\n")
     
     print(f"开始生成 {total_freqs} 个频率的条纹图案...\n")
-
-# === 生成对应频率的条纹图像 ===
+    print(f"{'文件夹':8s} | 空间频率 | {'周期(px)':10s} | 保存信息")
+    print("-" * 70)
+    
+    # === 生成对应频率的条纹图像 ===
     for idx, f in enumerate(frequencies, 1):
-        print(f"[{idx}/{total_freqs}] ", end='')
+        print(f"[{idx:3d}/{total_freqs}] ", end='')
         generate_fringe_for_frequency(
             frequency=f, 
             height=height, 
