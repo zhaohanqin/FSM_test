@@ -462,7 +462,7 @@ class FSADecoder:
     同时保持了原有的API接口，确保向后兼容性。
     """
     
-    def __init__(self, projector_width: int, projector_height: int):
+    def __init__(self, projector_width: int, projector_height: int, frequency_step: float = 1.0):
         """
         初始化FSA解码器
         
@@ -472,9 +472,12 @@ class FSADecoder:
             投影仪的宽度（像素数）
         projector_height : int
             投影仪的高度（像素数）
+        frequency_step : float
+            频率步长，默认为1.0。当设置为0.5时，频率间隔为0.5Hz
         """
         self.proj_width = projector_width
         self.proj_height = projector_height
+        self.frequency_step = frequency_step
         
     def verify_image_sequence(self, images: np.ndarray, num_frequencies: int, sample_points: int = 5):
         """
@@ -654,6 +657,7 @@ class FSADecoder:
                         'direction': direction,
                         'N': N,
                         'num_frequencies': num_frequencies,
+                        'frequency_step': self.frequency_step,  # 频率步长
                         # 添加原始数据
                         'I0': spectrum_raw_data['I0'],
                         'I1': spectrum_raw_data['I1'],
@@ -952,6 +956,7 @@ class FSADecoder:
                             'direction': direction,
                             'N': N,
                             'num_frequencies': num_frequencies,
+                            'frequency_step': self.frequency_step,  # 频率步长
                             # 添加原始数据
                             'I0': spectrum_raw_data['I0'],
                             'I1': spectrum_raw_data['I1'],

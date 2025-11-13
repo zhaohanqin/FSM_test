@@ -45,7 +45,7 @@ from FSM_decode_core import FSADecoder
 
 def decode_fsa_images(projector_width, projector_height, num_frequencies, decode_direction,
                       image_dir_hor, image_dir_ver, output_dir, block_size, use_cache,
-                      verify_sequence, low_memory_mode, spectrum_point):
+                      verify_sequence, low_memory_mode, spectrum_point, frequency_step=1.0):
     """
     使用FSADecoder解码实际采集的图像
     
@@ -75,6 +75,8 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
         是否使用低内存模式
     spectrum_point : tuple or None
         频谱分析点坐标 (x, y)
+    frequency_step : float
+        频率步长（Hz），默认为1.0
     """
     
     # 使用传入的参数
@@ -90,6 +92,7 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     VERIFY_SEQUENCE = verify_sequence
     LOW_MEMORY_MODE = low_memory_mode
     SPECTRUM_POINT = spectrum_point
+    FREQUENCY_STEP = frequency_step
     
     # 验证配置
     if DECODE_DIRECTION not in ["both", "ver", "hor"]:
@@ -102,6 +105,8 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     print("="*80)
     print(f"投影仪分辨率: {PROJECTOR_WIDTH} × {PROJECTOR_HEIGHT}")
     print(f"采集频率数: {NUM_FREQUENCIES}")
+    print(f"频率步长: {FREQUENCY_STEP} Hz")
+    print(f"最高频率: {(NUM_FREQUENCIES-1) * FREQUENCY_STEP} Hz")
     print(f"总图像数: {NUM_FREQUENCIES * 4} (4步相移)")
     print(f"解码方向: {DECODE_DIRECTION.upper()}")
     if DECODE_DIRECTION == "both":
@@ -117,7 +122,7 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     # 创建解码器实例
-    decoder = FSADecoder(PROJECTOR_WIDTH, PROJECTOR_HEIGHT)
+    decoder = FSADecoder(PROJECTOR_WIDTH, PROJECTOR_HEIGHT, FREQUENCY_STEP)
     
     # ==================== 解码水平方向 ====================
     if DECODE_DIRECTION in ["both", "hor"]:
@@ -354,10 +359,13 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     direction = spectrum_data['direction']
     N = spectrum_data['N']
     M = spectrum_data['num_frequencies']
+    frequency_step = spectrum_data.get('frequency_step', 1.0)  # 获取频率步长，默认为1.0
     
     print(f"分析点: ({point[0]}, {point[1]})")
     print(f"解码方向: {'水平 (投影仪行坐标)' if direction == 'hor' else '垂直 (投影仪列坐标)'}")
     print(f"频率数量: {M}")
+    print(f"频率步长: {frequency_step} Hz")
+    print(f"最高频率: {(M-1) * frequency_step} Hz")
     print(f"DFT长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
     print(f"最大峰值位置: {spectrum_data['peak_index']}")
     print(f"最大峰值强度: {spectrum_data['peak_value']:.4f}")
@@ -365,23 +373,26 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     # 创建图形 (2行4列布局，但只用7个子图)
     fig = plt.figure(figsize=(20, 10))
     
+    # 计算实际频率轴
+    freq_axis = np.arange(M) * frequency_step  # 实际频率值
+    
     # 1. 原始强度序列
     ax1 = plt.subplot(2, 4, 1)
-    ax1.plot(spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=1.5, markersize=3)
-    ax1.plot(spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=1.5, markersize=3)
-    ax1.plot(spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=1.5, markersize=3)
-    ax1.plot(spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=1.5, markersize=3)
-    ax1.set_xlabel('频率索引 k')
+    ax1.plot(freq_axis, spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=1.5, markersize=3)
+    ax1.plot(freq_axis, spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=1.5, markersize=3)
+    ax1.plot(freq_axis, spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=1.5, markersize=3)
+    ax1.plot(freq_axis, spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=1.5, markersize=3)
+    ax1.set_xlabel('频率 (Hz)')
     ax1.set_ylabel('强度值')
-    ax1.set_title(f'1. 原始强度序列\n(M={M}个频率，每个4个相位)')
+    ax1.set_title(f'1. 原始强度序列\n(M={M}个频率，步长={frequency_step}Hz)')
     ax1.legend(loc='best')
     ax1.grid(True, alpha=0.3)
     
     # 2. 差分信号
     ax2 = plt.subplot(2, 4, 2)
-    ax2.plot(spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=1.5, markersize=3)
-    ax2.plot(spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=1.5, markersize=3)
-    ax2.set_xlabel('频率索引 k')
+    ax2.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=1.5, markersize=3)
+    ax2.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=1.5, markersize=3)
+    ax2.set_xlabel('频率 (Hz)')
     ax2.set_ylabel('差分值')
     ax2.set_title('2. 差分信号\n(消除直流分量和反射率)')
     ax2.legend(loc='best')
@@ -390,8 +401,8 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     # 3. 复数信号的幅值
     ax3 = plt.subplot(2, 4, 3)
     D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
-    ax3.plot(D_magnitude, 'o-', color='purple', linewidth=1.5, markersize=3)
-    ax3.set_xlabel('频率索引 k')
+    ax3.plot(freq_axis, D_magnitude, 'o-', color='purple', linewidth=1.5, markersize=3)
+    ax3.set_xlabel('频率 (Hz)')
     ax3.set_ylabel('|D| (复数信号幅值)')
     ax3.set_title('3. 复数信号幅值\nD = Dc + j·Ds')
     ax3.grid(True, alpha=0.3)
@@ -515,13 +526,13 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
         def save_subplot_1():
             """1. 原始强度序列"""
             fig_sub = plt.figure(figsize=(10, 6))
-            plt.plot(spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=2, markersize=4)
-            plt.plot(spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=2, markersize=4)
-            plt.plot(spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=2, markersize=4)
-            plt.plot(spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=2, markersize=4)
-            plt.xlabel('频率索引 k', fontsize=12)
+            plt.plot(freq_axis, spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=2, markersize=4)
+            plt.plot(freq_axis, spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=2, markersize=4)
+            plt.plot(freq_axis, spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=2, markersize=4)
+            plt.plot(freq_axis, spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=2, markersize=4)
+            plt.xlabel('频率 (Hz)', fontsize=12)
             plt.ylabel('强度值', fontsize=12)
-            plt.title(f'原始强度序列 (M={M}个频率，每个4个相位)', fontsize=14, fontweight='bold')
+            plt.title(f'原始强度序列 (M={M}个频率，步长={frequency_step}Hz)', fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.3)
             path = os.path.join(save_dir, f'{base_name}_01_原始强度序列.png')
@@ -532,9 +543,9 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
         def save_subplot_2():
             """2. 差分信号"""
             fig_sub = plt.figure(figsize=(10, 6))
-            plt.plot(spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=2, markersize=4)
-            plt.plot(spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=2, markersize=4)
-            plt.xlabel('频率索引 k', fontsize=12)
+            plt.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=2, markersize=4)
+            plt.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=2, markersize=4)
+            plt.xlabel('频率 (Hz)', fontsize=12)
             plt.ylabel('差分值', fontsize=12)
             plt.title('差分信号 (消除直流分量和反射率)', fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
@@ -548,8 +559,8 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             """3. 复数信号幅值"""
             fig_sub = plt.figure(figsize=(10, 6))
             D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
-            plt.plot(D_magnitude, 'o-', color='purple', linewidth=2, markersize=4)
-            plt.xlabel('频率索引 k', fontsize=12)
+            plt.plot(freq_axis, D_magnitude, 'o-', color='purple', linewidth=2, markersize=4)
+            plt.xlabel('频率 (Hz)', fontsize=12)
             plt.ylabel('|D| (复数信号幅值)', fontsize=12)
             plt.title('复数信号幅值 (D = Dc + j·Ds)', fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
@@ -835,6 +846,10 @@ def main():
     # -------------------- 2. FSA采集参数 --------------------
     NUM_FREQUENCIES = 151       # 采集的频率数量（M值）
                                 # 注意：总图像数 = NUM_FREQUENCIES × 4 (四步相移)
+    FREQUENCY_STEP = 1.0        # 频率步长（Hz）
+                                # 1.0: 标准步长，频率为 0, 1, 2, ..., 150 Hz
+                                # 0.5: 精细步长，频率为 0, 0.5, 1.0, ..., 75 Hz
+                                # 当步长为0.5时，需要301个频率才能达到150Hz
     
     # -------------------- 3. 解码方向选择 --------------------
     # 控制解码哪个方向：
@@ -898,7 +913,8 @@ def main():
         use_cache=USE_CACHE,
         verify_sequence=VERIFY_SEQUENCE,
         low_memory_mode=LOW_MEMORY_MODE,
-        spectrum_point=SPECTRUM_POINT
+        spectrum_point=SPECTRUM_POINT,
+        frequency_step=FREQUENCY_STEP
     )
 
 
