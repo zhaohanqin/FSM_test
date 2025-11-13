@@ -43,9 +43,52 @@ import os
 from FSM_decode_core import FSADecoder
 
 
+def save_spectrum_data(spectrum_data, output_dir, direction, spectrum_points):
+    """
+    保存多点频谱数据到不同的文件夹
+    
+    Parameters:
+    -----------
+    spectrum_data : dict or None
+        频谱数据字典，键为点索引，值为频谱数据
+    output_dir : str
+        输出目录
+    direction : str
+        方向标识 ('hor' 或 'ver')
+    spectrum_points : tuple, list or None
+        原始的频谱点配置
+    """
+    if spectrum_data is None:
+        print(f"\n⊙ {direction.upper()}方向: 无频谱数据需要保存")
+        return
+    
+    # 统一转换为列表格式
+    if isinstance(spectrum_points, tuple):
+        points_list = [spectrum_points]
+    else:
+        points_list = spectrum_points
+    
+    print(f"\n✓ 保存{direction.upper()}方向频谱数据:")
+    
+    for point_idx, point_data in spectrum_data.items():
+        point = point_data['point']
+        
+        # 为每个点创建独立的文件夹
+        point_dir = os.path.join(output_dir, f"spectrum_point_{point[0]}_{point[1]}_{direction}")
+        os.makedirs(point_dir, exist_ok=True)
+        
+        # 保存频谱数据
+        spectrum_path = os.path.join(point_dir, f"spectrum_{direction}.npy")
+        np.save(spectrum_path, point_data)
+        
+        print(f"  点{point_idx+1} ({point[0]}, {point[1]}): 数据已保存到 {point_dir}")
+    
+    print(f"  共保存了 {len(spectrum_data)} 个点的{direction.upper()}方向频谱数据")
+
+
 def decode_fsa_images(projector_width, projector_height, num_frequencies, decode_direction,
                       image_dir_hor, image_dir_ver, output_dir, block_size, use_cache,
-                      verify_sequence, low_memory_mode, spectrum_point, frequency_step=1.0):
+                      verify_sequence, low_memory_mode, spectrum_points, frequency_step=1.0):
     """
     使用FSADecoder解码实际采集的图像
     
@@ -73,8 +116,8 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
         是否验证图像序列顺序
     low_memory_mode : bool
         是否使用低内存模式
-    spectrum_point : tuple or None
-        频谱分析点坐标 (x, y)
+    spectrum_points : tuple, list of tuples, or None
+        频谱分析点坐标，支持单个点 (x, y) 或多个点列表 [(x1, y1), (x2, y2), ...]
     frequency_step : float
         频率步长（Hz），默认为1.0
     """
@@ -91,12 +134,12 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     USE_CACHE = use_cache
     VERIFY_SEQUENCE = verify_sequence
     LOW_MEMORY_MODE = low_memory_mode
-    SPECTRUM_POINT = spectrum_point
+    SPECTRUM_POINTS = spectrum_points
     FREQUENCY_STEP = frequency_step
     
     # 验证配置
     if DECODE_DIRECTION not in ["both", "ver", "hor"]:
-        print(f"❌ 错误: DECODE_DIRECTION 参数无效: '{DECODE_DIRECTION}'")
+        print(f"[ERROR] 错误: DECODE_DIRECTION 参数无效: '{DECODE_DIRECTION}'")
         print("   有效值: 'both', 'ver', 'hor'")
         return None
     
@@ -141,14 +184,14 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
                 verify_sequence=VERIFY_SEQUENCE
             )
             
-            # 执行解码 - 注意：both模式下也要生成频谱
+            # 执行解码 
             disparity_hor, peak_hor, spectrum_hor = decoder.decode_direction(
                 images=images_hor,
                 direction='hor',
                 num_frequencies=NUM_FREQUENCIES,
                 block_size=BLOCK_SIZE,
                 low_memory=LOW_MEMORY_MODE,
-                spectrum_point=SPECTRUM_POINT  # 总是传入，不管是什么模式
+                spectrum_points=SPECTRUM_POINTS 
             )
             
             # 保存结果
@@ -197,7 +240,7 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
                 num_frequencies=NUM_FREQUENCIES,
                 block_size=BLOCK_SIZE,
                 low_memory=LOW_MEMORY_MODE,
-                spectrum_point=SPECTRUM_POINT  # 总是传入，不管是什么模式
+                spectrum_points=SPECTRUM_POINTS  # 总是传入，不管是什么模式
             )
             
             # 保存结果
@@ -225,17 +268,19 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     # ==================== 保存频谱数据 ====================
     spectrum_data_list = []  # 存储所有方向的频谱数据
     
+    # 保存水平方向频谱数据
     if DECODE_DIRECTION in ["both", "hor"] and 'spectrum_hor' in locals() and spectrum_hor is not None:
-        spectrum_path = os.path.join(OUTPUT_DIR, "spectrum_hor.npy")
-        np.save(spectrum_path, spectrum_hor)
-        print(f"\n✓ 水平方向频谱数据已保存: {spectrum_path}")
+        save_spectrum_data(spectrum_hor, OUTPUT_DIR, 'hor', SPECTRUM_POINTS)
         spectrum_data_list.append(spectrum_hor)
+        # 生成可视化图像
+        visualize_multi_point_spectrum(spectrum_hor, OUTPUT_DIR)
     
+    # 保存垂直方向频谱数据
     if DECODE_DIRECTION in ["both", "ver"] and 'spectrum_ver' in locals() and spectrum_ver is not None:
-        spectrum_path = os.path.join(OUTPUT_DIR, "spectrum_ver.npy")
-        np.save(spectrum_path, spectrum_ver)
-        print(f"\n✓ 垂直方向频谱数据已保存: {spectrum_path}")
+        save_spectrum_data(spectrum_ver, OUTPUT_DIR, 'ver', SPECTRUM_POINTS)
         spectrum_data_list.append(spectrum_ver)
+        # 生成可视化图像
+        visualize_multi_point_spectrum(spectrum_ver, OUTPUT_DIR)
     
     # ==================== 完成 ====================
     print("\n" + "="*80)
@@ -305,7 +350,7 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     try:
         import matplotlib.pyplot as plt
     except ImportError as e:
-        print(f"\n❌ 频谱可视化错误：无法导入 matplotlib")
+        print(f"\n[ERROR] 频谱可视化错误：无法导入 matplotlib")
         print(f"错误原因：{str(e)[:100]}")
         print("\n解决方案：")
         print("  1. 降级 NumPy：pip install 'numpy<2'")
@@ -505,27 +550,30 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     ax8.legend(loc='best', fontsize=9)
     ax8.grid(True, alpha=0.3)
     
-    plt.suptitle(f'FSA频谱分析 - 像素({point[0]}, {point[1]}) - {direction.upper()}方向', 
+    # 添加峰值大小信息到总标题
+    peak_value = spectrum_data['peak_value']
+    peak_index = spectrum_data['peak_index']
+    plt.suptitle(f'FSA频谱分析 - 像素({point[0]}, {point[1]}) - {direction.upper()}方向\n峰值位置: {peak_index}, 峰值强度(质量): {peak_value:.4f}', 
                  fontsize=16, fontweight='bold')
-    plt.tight_layout()
     
-    # ==================== 保存完整的8子图图像 ====================
+    # ==================== 保存图像到像素点文件夹 ====================
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"\n✓ 完整频谱图像已保存: {save_path}")
-    
-    # ==================== 分别保存8张子图 ====================
-    if save_path:
-        # 获取保存目录
-        save_dir = os.path.dirname(save_path)
+        # 获取保存目录和基础文件名
+        pixel_save_dir = os.path.dirname(save_path)
         base_name = os.path.basename(save_path).replace('.png', '')
+        pixel_folder_name = os.path.basename(pixel_save_dir)
         
-        print(f"\n正在保存各个子图...")
+        # 保存主要的8子图汇总图像
+        plt.tight_layout(pad=2.0)  # 使用固定的padding
+        plt.savefig(save_path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
+        print(f"\n✓ 完整频谱图像已保存到: {pixel_folder_name}/{os.path.basename(save_path)}")
+        
+        print(f"\n正在保存各个子图到文件夹: {pixel_folder_name}...")
         
         # 定义9个子图的绘制函数
         def save_subplot_1():
             """1. 原始强度序列"""
-            fig_sub = plt.figure(figsize=(10, 6))
+            fig_sub = plt.figure(figsize=(12, 8))
             plt.plot(freq_axis, spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=2, markersize=4)
             plt.plot(freq_axis, spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=2, markersize=4)
             plt.plot(freq_axis, spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=2, markersize=4)
@@ -535,14 +583,15 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.title(f'原始强度序列 (M={M}个频率，步长={frequency_step}Hz)', fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.3)
-            path = os.path.join(save_dir, f'{base_name}_01_原始强度序列.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_01_原始强度序列.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_2():
             """2. 差分信号"""
-            fig_sub = plt.figure(figsize=(10, 6))
+            fig_sub = plt.figure(figsize=(12, 8))
             plt.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=2, markersize=4)
             plt.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=2, markersize=4)
             plt.xlabel('频率 (Hz)', fontsize=12)
@@ -550,28 +599,30 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.title('差分信号 (消除直流分量和反射率)', fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.3)
-            path = os.path.join(save_dir, f'{base_name}_02_差分信号.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_02_差分信号.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_3():
             """3. 复数信号幅值"""
-            fig_sub = plt.figure(figsize=(10, 6))
+            fig_sub = plt.figure(figsize=(12, 8))
             D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
             plt.plot(freq_axis, D_magnitude, 'o-', color='purple', linewidth=2, markersize=4)
             plt.xlabel('频率 (Hz)', fontsize=12)
             plt.ylabel('|D| (复数信号幅值)', fontsize=12)
             plt.title('复数信号幅值 (D = Dc + j·Ds)', fontsize=14, fontweight='bold')
             plt.grid(True, alpha=0.3)
-            path = os.path.join(save_dir, f'{base_name}_03_复数信号幅值.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_03_复数信号幅值.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_4():
             """4. 完整频谱（线性）"""
-            fig_sub = plt.figure(figsize=(12, 6))
+            fig_sub = plt.figure(figsize=(12, 8))
             plt.plot(frequencies, spectrum, '-', linewidth=1.5, color='blue', alpha=0.7)
             plt.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
                        linewidth=2.5, label=f"峰值位置={spectrum_data['peak_index']}")
@@ -581,14 +632,15 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
                      fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.3)
-            path = os.path.join(save_dir, f'{base_name}_04_完整频谱_线性.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_04_完整频谱_线性.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_5():
             """5. 完整频谱（对数）"""
-            fig_sub = plt.figure(figsize=(12, 6))
+            fig_sub = plt.figure(figsize=(12, 8))
             spectrum_log = np.log10(spectrum + 1e-10)
             plt.plot(frequencies, spectrum_log, '-', linewidth=1.5, color='green', alpha=0.7)
             plt.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
@@ -598,14 +650,15 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.title('完整DFT频谱-对数坐标 (更清晰显示次要峰值)', fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.3)
-            path = os.path.join(save_dir, f'{base_name}_05_完整频谱_对数.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_05_完整频谱_对数.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_6():
             """6. 峰值附近局部放大"""
-            fig_sub = plt.figure(figsize=(10, 6))
+            fig_sub = plt.figure(figsize=(12, 8))
             peak_idx = spectrum_data['peak_index']
             half_width = 100
             start = max(0, peak_idx - half_width)
@@ -619,14 +672,15 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.title(f'峰值附近局部放大 (范围: [{start}, {end}])', fontsize=14, fontweight='bold')
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.3)
-            path = os.path.join(save_dir, f'{base_name}_06_峰值局部放大.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_06_峰值局部放大.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_7():
             """7. 前20个峰值分析（按强度排序）"""
-            fig_sub = plt.figure(figsize=(12, 7))
+            fig_sub = plt.figure(figsize=(12, 8))
             top20_indices = np.argsort(spectrum)[-20:][::-1]
             top20_values = spectrum[top20_indices]
             
@@ -634,16 +688,9 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.plot(top20_indices, top20_values, 'o-', linewidth=2.5, markersize=8, 
                     color='blue', alpha=0.7, label='峰值强度')
             
-            # 高亮显示最大峰值（红色）
-            plt.plot(top20_indices[0], top20_values[0], 'o', markersize=15, color='red', 
+            # 高亮显示最大峰值（红色，与其他点相同大小）
+            plt.plot(top20_indices[0], top20_values[0], 'o', markersize=8, color='red', 
                     zorder=5, label=f'最大峰值 (位置={top20_indices[0]}, 强度={top20_values[0]:.2f})')
-            
-            # 在每个点旁边显示纵坐标值（简化版，不用框）
-            for i in range(min(10, len(top20_indices))):
-                y_offset = 0.2 if i % 2 == 0 else -0.3
-                plt.text(top20_indices[i], top20_values[i] + y_offset, f'{top20_values[i]:.2f}', 
-                        fontsize=10, ha='center', va='center', 
-                        color='red' if i == 0 else 'darkblue', fontweight='bold')
             
             plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=13, fontweight='bold')
             plt.ylabel('归一化幅值', fontsize=13, fontweight='bold')
@@ -652,14 +699,15 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.4, linestyle='--')
             
-            path = os.path.join(save_dir, f'{base_name}_07_峰值分析_按强度.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_07_峰值分析_按强度.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
         def save_subplot_8():
             """8. 峰值强度随坐标变化（按坐标排序）"""
-            fig_sub = plt.figure(figsize=(12, 7))
+            fig_sub = plt.figure(figsize=(12, 8))
             top20_indices = np.argsort(spectrum)[-20:][::-1]
             top20_values = spectrum[top20_indices]
             
@@ -675,16 +723,9 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.plot(sorted_indices, sorted_values, 'o-', linewidth=2.5, markersize=8, 
                     color='blue', alpha=0.7, label='峰值强度')
             
-            # 高亮显示最大峰值（红色）
-            plt.plot(sorted_indices[max_peak_pos], sorted_values[max_peak_pos], 'o', markersize=15, color='red', 
+            # 高亮显示最大峰值（红色，与其他点相同大小）
+            plt.plot(sorted_indices[max_peak_pos], sorted_values[max_peak_pos], 'o', markersize=8, color='red', 
                     zorder=5, label=f'最大峰值 (位置={sorted_indices[max_peak_pos]}, 强度={sorted_values[max_peak_pos]:.2f})')
-            
-            # 在关键点旁边显示数值（简化版）
-            for i in range(0, len(sorted_indices), max(1, len(sorted_indices)//8)):
-                y_offset = 0.2 if i % 2 == 0 else -0.3
-                color = 'red' if i == max_peak_pos else 'darkblue'
-                plt.text(sorted_indices[i], sorted_values[i] + y_offset, f'{sorted_values[i]:.2f}', 
-                        fontsize=10, ha='center', va='center', color=color, fontweight='bold')
             
             plt.xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标", fontsize=13, fontweight='bold')
             plt.ylabel('归一化幅值', fontsize=13, fontweight='bold')
@@ -693,8 +734,9 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             plt.legend(loc='best', fontsize=11)
             plt.grid(True, alpha=0.4, linestyle='--')
             
-            path = os.path.join(save_dir, f'{base_name}_08_峰值分析_按坐标.png')
-            plt.savefig(path, dpi=150, bbox_inches='tight')
+            path = os.path.join(pixel_save_dir, f'{base_name}_08_峰值分析_按坐标.png')
+            plt.tight_layout(pad=1.5)
+            plt.savefig(path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
             plt.close(fig_sub)
             return path
         
@@ -710,10 +752,14 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
             saved_files.append(('峰值分析_按强度', save_subplot_7()))
             saved_files.append(('峰值分析_按坐标', save_subplot_8()))
             
-            print(f"\n✓ 已保存 {len(saved_files)} 张独立子图:")
+            print(f"\n✓ 已保存汇总图和 {len(saved_files)} 张独立子图到文件夹 {pixel_folder_name}:")
+            # 显示汇总图
+            summary_file_size = os.path.getsize(save_path) / 1024  # KB
+            print(f"  ✓ {'8子图汇总':16s} - {os.path.basename(save_path):50s} ({summary_file_size:.1f} KB)")
+            # 显示各个子图
             for name, path in saved_files:
                 file_size = os.path.getsize(path) / 1024  # KB
-                print(f"  ✓ {name:16s} - {os.path.basename(path):70s} ({file_size:.1f} KB)")
+                print(f"  ✓ {name:16s} - {os.path.basename(path):50s} ({file_size:.1f} KB)")
         
         except Exception as e:
             print(f"⚠ 警告：保存子图时出错: {str(e)[:100]}")
@@ -725,6 +771,64 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     
     print("="*80)
     return True
+
+
+def visualize_multi_point_spectrum(spectrum_data_dict: dict, save_dir: str = None):
+    """
+    可视化多个点的频谱数据，为每个点生成独立的分析图
+    
+    Parameters:
+    -----------
+    spectrum_data_dict : dict
+        多点频谱数据字典，键为点索引，值为频谱数据
+    save_dir : str, optional
+        保存图像的目录路径
+    
+    Returns:
+    --------
+    bool
+        成功返回True，失败返回False
+    """
+    if not spectrum_data_dict:
+        print("\n⊙ 无频谱数据需要可视化")
+        return False
+    
+    print(f"\n🎨 开始可视化 {len(spectrum_data_dict)} 个点的频谱数据...")
+    
+    success_count = 0
+    for point_idx, spectrum_data in spectrum_data_dict.items():
+        try:
+            point = spectrum_data['point']
+            direction = spectrum_data['direction']
+            
+            print(f"\n  正在处理点{point_idx+1}: ({point[0]}, {point[1]}) - {direction.upper()}方向")
+            
+            # 为每个点创建专用文件夹和保存路径
+            if save_dir:
+                # 创建像素点专用文件夹
+                pixel_folder_name = f"spectrum_point_{point[0]}_{point[1]}_{direction}"
+                pixel_folder_path = os.path.join(save_dir, pixel_folder_name)
+                os.makedirs(pixel_folder_path, exist_ok=True)
+                
+                # 直接设置保存到像素点文件夹中的路径
+                point_save_path = os.path.join(pixel_folder_path, f"spectrum_point_{point[0]}_{point[1]}_{direction}_analysis.png")
+            else:
+                point_save_path = None
+            
+            # 调用单点可视化函数
+            result = visualize_spectrum(spectrum_data, point_save_path)
+            
+            if result:
+                success_count += 1
+                print(f"    ✓ 点{point_idx+1} 频谱分析完成")
+            else:
+                print(f"    ✗ 点{point_idx+1} 频谱分析失败")
+                
+        except Exception as e:
+            print(f"    ✗ 点{point_idx+1} 处理出错: {str(e)[:100]}")
+    
+    print(f"\n🎨 多点频谱可视化完成: {success_count}/{len(spectrum_data_dict)} 个点成功")
+    return success_count > 0
 
 
 def load_and_inspect_results(result_dir: str):
@@ -779,53 +883,6 @@ def load_and_inspect_results(result_dir: str):
             print(f"      置信度: 水平={conf_h:.4f}, 垂直={conf_v:.4f}")
 
 
-if __name__ == "__main__":
-    # 执行解码
-    result_dir, spectrum_data_list = decode_fsa_images()
-    
-    # 检查结果
-    if result_dir and os.path.exists(result_dir):
-        load_and_inspect_results(result_dir)
-    
-    # 可视化频谱（如果有频谱数据）
-    if spectrum_data_list and len(spectrum_data_list) > 0:
-        print("\n" + "="*80)
-        print("开始频谱可视化")
-        print("="*80)
-        
-        # 为每个方向创建单独的子文件夹
-        base_vis_dir = os.path.join(result_dir, "..", "visualizations") if result_dir else "./results/visualizations"
-        
-        for spectrum_data in spectrum_data_list:
-            direction = spectrum_data['direction']
-            point = spectrum_data['point']
-            
-            # 为每个方向创建子文件夹
-            vis_dir = os.path.join(base_vis_dir, f"{direction}_direction")
-            os.makedirs(vis_dir, exist_ok=True)
-            
-            print(f"\n{'='*60}")
-            print(f"可视化 {direction.upper()} 方向的频谱分析")
-            print(f"保存位置: {vis_dir}")
-            print(f"{'='*60}")
-            
-            save_path = os.path.join(vis_dir, f'spectrum_{direction}_x{point[0]}_y{point[1]}.png')
-            
-            result = visualize_spectrum(spectrum_data, save_path=save_path)
-            if result is None:
-                print(f"\n⚠ 提示：{direction} 方向频谱可视化失败，请解决 matplotlib 版本问题后重试")
-        
-        print(f"\n✓ 所有频谱可视化完成")
-        print(f"  基础目录: {base_vis_dir}")
-        if len(spectrum_data_list) == 2:
-            print(f"  - HOR方向: {os.path.join(base_vis_dir, 'hor_direction')}")
-            print(f"  - VER方向: {os.path.join(base_vis_dir, 'ver_direction')}")
-    
-    print("\n" + "="*80)
-    print("程序结束")
-    print("="*80)
-
-
 def main():
     """
     主函数
@@ -862,7 +919,7 @@ def main():
     # 请根据实际情况修改以下路径
     IMAGE_DIR_HOR = r"F:\FSM_horizontal_f0_f150_images"  # 水平条纹图像文件夹
     IMAGE_DIR_VER = r"F:\FSM_vertical_f0_f150_images"    # 垂直条纹图像文件夹
-    OUTPUT_DIR = r"D:\在校学习\fsa\results\fsa_decode"  # 输出结果文件夹
+    OUTPUT_DIR = r"d:\在校学习\FSM\results\fsa_decode"  # 输出结果文件夹
     # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
     
     # -------------------- 5. 处理参数 --------------------
@@ -883,18 +940,20 @@ def main():
     #   - 速度: 较慢（约需 10-30 分钟）
     #   - 适用: 内存 < 12GB 的系统
     #   - 推荐: 如果遇到内存错误，请设为 True
-    #
+    
     LOW_MEMORY_MODE = False     # 内存不足时设为 True
     
     # -------------------- 7. 频谱分析参数 --------------------
-    # 用途：指定一个像素点，解码器会保存该点的完整DFT频谱
-    # 格式：(x, y) 或 None
+    # 用途：指定一个或多个像素点，解码器会保存这些点的完整DFT频谱
+    # 格式：(x, y) 或 [(x1, y1), (x2, y2), ...] 或 None
     # 
     # 示例：
-    #   SPECTRUM_POINT = (1200, 1000)  # 分析像素(1200, 1000)的频谱
-    #   SPECTRUM_POINT = None          # 不进行频谱分析
+    #   SPECTRUM_POINTS = (1200, 1000)                    # 分析单个像素点
+    #   SPECTRUM_POINTS = [(1200, 1000), (800, 600)]      # 分析多个像素点
+    #   SPECTRUM_POINTS = None                             # 不进行频谱分析
     #
-    SPECTRUM_POINT = (1200, 1000)  # 设为None则不进行频谱分析
+    # 注意：每个像素点的频谱数据将保存在独立的文件夹中
+    SPECTRUM_POINTS = [(1200, 1000), (800, 600), (1500, 800)]  # 设为None则不进行频谱分析
     
     # ========================================================================
     # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改
@@ -913,7 +972,7 @@ def main():
         use_cache=USE_CACHE,
         verify_sequence=VERIFY_SEQUENCE,
         low_memory_mode=LOW_MEMORY_MODE,
-        spectrum_point=SPECTRUM_POINT,
+        spectrum_points=SPECTRUM_POINTS,
         frequency_step=FREQUENCY_STEP
     )
 

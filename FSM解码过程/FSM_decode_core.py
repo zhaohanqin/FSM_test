@@ -38,7 +38,7 @@ FSA (Frequency Shift Analysis) 频移法解码核心模块（重构版）
 
 import numpy as np
 import os
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Union
 
 
 class ImageLoader:
@@ -187,7 +187,7 @@ class ImageLoader:
             print(f"   实际: {images.shape[0]} 张")
             return False
         
-        print(f"✓ 图像数量正确: {images.shape[0]} 张")
+        print(f"[OK] 图像数量正确: {images.shape[0]} 张")
         
         # 检查同一频率的不同相位图像之间的差异
         print(f"\n检查相位图像差异 (采样 {sample_points} 个频率)...")
@@ -215,13 +215,13 @@ class ImageLoader:
                 print(" ⚠ (差异较小，可能有问题)")
                 has_variation = False
             else:
-                print(" ✓")
+                print(" [OK]")
         
         if not has_variation:
             print("\n⚠ 警告: 某些频率的相位图像差异很小，请检查图像顺序！")
             return False
         
-        print("\n✓ 图像序列验证通过！")
+        print("\n[OK] 图像序列验证通过！")
         print("="*60)
         return True
 
@@ -568,7 +568,7 @@ class FSADecoder:
                                      num_frequencies: int,
                                      N: int,
                                      debug_point: Optional[Tuple[int, int]] = None,
-                                     spectrum_point: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, np.ndarray, Optional[dict]]:
+                                     spectrum_points: Optional[Union[Tuple[int, int], List[Tuple[int, int]]]] = None) -> Tuple[np.ndarray, np.ndarray, Optional[dict]]:
         """
         低内存模式解码（逐行处理）
         
@@ -577,8 +577,8 @@ class FSADecoder:
         
         Parameters:
         -----------
-        spectrum_point : tuple(x, y), optional
-            频谱分析点坐标（低内存模式现已支持）
+        spectrum_points : tuple(x, y) or list of tuples, optional
+            频谱分析点坐标，支持单个点或多个点列表（低内存模式现已支持）
         """
         height, width = images.shape[1], images.shape[2]
         
@@ -588,9 +588,21 @@ class FSADecoder:
         
         # 初始化频谱数据存储
         spectrum_data = None
-        if spectrum_point is not None:
-            print(f"\n⚡ 频谱分析点: ({spectrum_point[0]}, {spectrum_point[1]})")
-            print("   低内存模式支持单点频谱分析（内存占用仅几KB）")
+        
+        # 处理频谱分析点参数
+        if spectrum_points is not None:
+            # 统一转换为列表格式
+            if isinstance(spectrum_points, tuple):
+                spectrum_points_list = [spectrum_points]
+            else:
+                spectrum_points_list = spectrum_points
+            
+            print(f"\n⚡ 频谱分析点: {len(spectrum_points_list)} 个点")
+            for i, point in enumerate(spectrum_points_list):
+                print(f"   点{i+1}: ({point[0]}, {point[1]})")
+            print("   低内存模式支持多点频谱分析（内存占用仅几KB每点）")
+        else:
+            spectrum_points_list = []
         
         # 初始化结果数组
         disparity = np.zeros((height, width), dtype=np.float32)
@@ -613,11 +625,12 @@ class FSADecoder:
             D_row = Dc_row + 1j * Ds_row  # (M, width)
             
             # 检查当前行是否包含频谱分析点
-            if spectrum_point is not None and row == spectrum_point[1]:
-                x = spectrum_point[0]
-                if 0 <= x < width:
+            current_row_spectrum_data = {}
+            for point_idx, point in enumerate(spectrum_points_list):
+                x, y = point
+                if row == y and 0 <= x < width:
                     # 保存该点的原始数据（仅几KB内存）
-                    spectrum_raw_data = {
+                    current_row_spectrum_data[point_idx] = {
                         'I0': I0_row[:, x].copy(),
                         'I1': I1_row[:, x].copy(),
                         'I2': I2_row[:, x].copy(),
@@ -644,40 +657,45 @@ class FSADecoder:
                 peak_idx = np.argmax(C_magnitude)
                 peak_value = C_magnitude[peak_idx] / num_frequencies
                 
-                # 如果是频谱分析点，保存完整频谱
-                if spectrum_point is not None and row == spectrum_point[1] and col == spectrum_point[0]:
-                    spectrum_data = {
-                        'spectrum': C_magnitude / N,         # 归一化频谱幅值
-                        'spectrum_raw': C_magnitude.copy(),  # 原始频谱幅值
-                        'spectrum_complex': C.copy(),        # 复数频谱
-                        'frequencies': np.arange(N),         # 频率坐标
-                        'peak_index': int(peak_idx),         # 最大峰值索引
-                        'peak_value': float(peak_value),     # 最大峰值强度
-                        'point': (col, row),
-                        'direction': direction,
-                        'N': N,
-                        'num_frequencies': num_frequencies,
-                        'frequency_step': self.frequency_step,  # 频率步长
-                        # 添加原始数据
-                        'I0': spectrum_raw_data['I0'],
-                        'I1': spectrum_raw_data['I1'],
-                        'I2': spectrum_raw_data['I2'],
-                        'I3': spectrum_raw_data['I3'],
-                        'Dc': spectrum_raw_data['Dc'],
-                        'Ds': spectrum_raw_data['Ds'],
-                    }
-                    
-                    print(f"\n\n  ⚡ [频谱分析] 点 ({col}, {row}) 的完整频谱已保存")
-                    print(f"    频谱长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
-                    print(f"    最大峰值位置: {peak_idx}")
-                    print(f"    最大峰值强度: {peak_value:.4f}")
-                    
-                    # 找出前10个峰值
-                    top10_indices = np.argsort(C_magnitude)[-10:][::-1]
-                    print(f"    频谱前10个峰值:")
-                    for i, idx in enumerate(top10_indices):
-                        print(f"      #{i+1}: 投影仪坐标={idx:4d}, 强度={C_magnitude[idx]/N:.4f}")
-                    print()
+                # 检查是否是频谱分析点，保存完整频谱
+                for point_idx in current_row_spectrum_data:
+                    point_data = current_row_spectrum_data[point_idx]
+                    if col == point_data['point'][0]:
+                        if spectrum_data is None:
+                            spectrum_data = {}
+                        
+                        spectrum_data[point_idx] = {
+                            'spectrum': C_magnitude / N,         # 归一化频谱幅值
+                            'spectrum_raw': C_magnitude.copy(),  # 原始频谱幅值
+                            'spectrum_complex': C.copy(),        # 复数频谱
+                            'frequencies': np.arange(N),         # 频率坐标
+                            'peak_index': int(peak_idx),         # 最大峰值索引
+                            'peak_value': float(peak_value),     # 最大峰值强度
+                            'point': (col, row),
+                            'direction': direction,
+                            'N': N,
+                            'num_frequencies': num_frequencies,
+                            'frequency_step': self.frequency_step,  # 频率步长
+                            # 添加原始数据
+                            'I0': point_data['I0'],
+                            'I1': point_data['I1'],
+                            'I2': point_data['I2'],
+                            'I3': point_data['I3'],
+                            'Dc': point_data['Dc'],
+                            'Ds': point_data['Ds'],
+                        }
+                        
+                        print(f"\n\n  ⚡ [频谱分析] 点{point_idx+1} ({col}, {row}) 的完整频谱已保存")
+                        print(f"    频谱长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
+                        print(f"    最大峰值位置: {peak_idx}")
+                        print(f"    最大峰值强度: {peak_value:.4f}")
+                        
+                        # 找出前10个峰值
+                        top10_indices = np.argsort(C_magnitude)[-10:][::-1]
+                        print(f"    频谱前10个峰值:")
+                        for i, idx in enumerate(top10_indices):
+                            print(f"      #{i+1}: 投影仪坐标={idx:4d}, 强度={C_magnitude[idx]/N:.4f}")
+                        print()
                 
                 # 子像素精度（质心法）
                 if peak_value > 0.1:
@@ -708,7 +726,7 @@ class FSADecoder:
                 print(f"    峰值强度: {peak[row, x]:.4f}")
         
         print()  # 换行
-        print(f"\n✓ 低内存模式解码完成")
+        print(f"\n[OK] 低内存模式解码完成")
         
         return disparity, peak, spectrum_data
     
@@ -719,7 +737,7 @@ class FSADecoder:
                         block_size: int = 100,
                         debug_point: Optional[Tuple[int, int]] = None,
                         low_memory: bool = False,
-                        spectrum_point: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, np.ndarray, Optional[dict]]:
+                        spectrum_points: Optional[Union[Tuple[int, int], List[Tuple[int, int]]]] = None) -> Tuple[np.ndarray, np.ndarray, Optional[dict]]:
         """
         对特定方向的条纹图像进行DFT解码
         
@@ -738,8 +756,8 @@ class FSADecoder:
             调试点坐标，如果指定，将输出该点的详细解码信息
         low_memory : bool
             是否使用低内存模式（逐行处理，极低内存占用但速度较慢）
-        spectrum_point : tuple(x, y), optional
-            频谱分析点坐标，如果指定，将保存该点的完整DFT频谱数据
+        spectrum_points : tuple(x, y) or list of tuples, optional
+            频谱分析点坐标，支持单个点或多个点列表，将保存指定点的完整DFT频谱数据
             
         Returns:
         --------
@@ -750,7 +768,7 @@ class FSADecoder:
             峰值强度图（置信度），形状为 (height, width)，
             值越大表示该点的解码质量越好
         spectrum_data : dict or None
-            如果指定了spectrum_point，返回该点的频谱数据字典，包含：
+            如果指定了spectrum_points，返回频谱数据字典，包含：
             - 'spectrum': 完整的频谱幅值 (长度为N)
             - 'frequencies': 频率坐标 (0到N-1)
             - 'peak_index': 最大峰值的索引位置
@@ -795,7 +813,7 @@ class FSADecoder:
         if low_memory:
             return self._decode_direction_low_memory(
                 images, direction, num_frequencies, N, 
-                debug_point, spectrum_point
+                debug_point, spectrum_points
             )
         
         # 步骤1: 提取四个相移图像序列（边提取边转换为float32，节省内存）
@@ -818,7 +836,7 @@ class FSADecoder:
         
         # 释放原始图像数组，节省内存
         del images
-        print(f"  ✓ 已释放原始图像数组，节省 ~{num_frequencies*4*I0.shape[1]*I0.shape[2]/1024/1024:.1f} MB 内存")
+        print(f"  [OK] 已释放原始图像数组，节省 ~{num_frequencies*4*I0.shape[1]*I0.shape[2]/1024/1024:.1f} MB 内存")
         
         # 步骤2: 构造复数信号
         print("\n步骤2: 构造复数信号...")
@@ -839,31 +857,40 @@ class FSADecoder:
             print(f"    Dc: 均值={Dc[:, y, x].mean():.2f}, 标准差={Dc[:, y, x].std():.2f}")
             print(f"    Ds: 均值={Ds[:, y, x].mean():.2f}, 标准差={Ds[:, y, x].std():.2f}")
         
-        # 如果指定了频谱分析点，提前保存该点的原始数据
-        spectrum_raw_data = None
-        if spectrum_point is not None:
-            x, y = spectrum_point
-            if 0 <= x < D.shape[2] and 0 <= y < D.shape[1]:
-                spectrum_raw_data = {
-                    'I0': I0[:, y, x].copy(),
-                    'I1': I1[:, y, x].copy(),
-                    'I2': I2[:, y, x].copy(),
-                    'I3': I3[:, y, x].copy(),
-                    'Dc': Dc[:, y, x].copy(),
-                    'Ds': Ds[:, y, x].copy(),
-                    'D': D[:, y, x].copy(),
-                    'point': (x, y),
-                    'direction': direction,
-                    'num_frequencies': num_frequencies,
-                    'N': N
-                }
-                print(f"\n  ✓ 已保存频谱分析点 ({x}, {y}) 的原始数据")
+        # 如果指定了频谱分析点，提前保存这些点的原始数据
+        spectrum_raw_data = {}
+        if spectrum_points is not None:
+            # 统一转换为列表格式
+            if isinstance(spectrum_points, tuple):
+                spectrum_points_list = [spectrum_points]
             else:
-                print(f"\n  ⚠ 警告: 频谱分析点 ({x}, {y}) 超出图像范围")
+                spectrum_points_list = spectrum_points
+                
+            for point_idx, point in enumerate(spectrum_points_list):
+                x, y = point
+                if 0 <= x < D.shape[2] and 0 <= y < D.shape[1]:
+                    spectrum_raw_data[point_idx] = {
+                        'I0': I0[:, y, x].copy(),
+                        'I1': I1[:, y, x].copy(),
+                        'I2': I2[:, y, x].copy(),
+                        'I3': I3[:, y, x].copy(),
+                        'Dc': Dc[:, y, x].copy(),
+                        'Ds': Ds[:, y, x].copy(),
+                        'D': D[:, y, x].copy(),
+                        'point': (x, y),
+                        'direction': direction,
+                        'num_frequencies': num_frequencies,
+                        'N': N
+                    }
+                    print(f"\n  [OK] 已保存频谱分析点{point_idx+1} ({x}, {y}) 的原始数据")
+                else:
+                    print(f"\n  ⚠ 警告: 频谱分析点{point_idx+1} ({x}, {y}) 超出图像范围")
+        else:
+            spectrum_points_list = []
         
         # 释放中间数组，节省内存
         del I0, I1, I2, I3, Dc, Ds
-        print(f"  ✓ 已释放中间数组（I0, I1, I2, I3, Dc, Ds），节省 ~{6*num_frequencies*D.shape[1]*D.shape[2]*4/1024/1024:.1f} MB 内存")
+        print(f"  [OK] 已释放中间数组（I0, I1, I2, I3, Dc, Ds），节省 ~{6*num_frequencies*D.shape[1]*D.shape[2]*4/1024/1024:.1f} MB 内存")
         
         # 初始化输出数组
         disparity = np.empty(D.shape[1:], dtype=np.float32)  # 视差图
@@ -871,9 +898,11 @@ class FSADecoder:
         
         # 初始化频谱数据存储
         spectrum_data = None
-        if spectrum_point is not None:
-            print(f"\n⚡ 频谱分析点: ({spectrum_point[0]}, {spectrum_point[1]})")
-            print("   将保存该点的完整DFT频谱数据")
+        if spectrum_points_list:
+            print(f"\n⚡ 频谱分析点: {len(spectrum_points_list)} 个点")
+            for i, point in enumerate(spectrum_points_list):
+                print(f"   点{i+1}: ({point[0]}, {point[1]})")
+            print("   将保存这些点的完整DFT频谱数据")
         
         # 步骤3: 分块DFT处理
         print("\n步骤3: 执行DFT变换（分块处理）...")
@@ -936,47 +965,51 @@ class FSADecoder:
                         print()
                 
                 # 如果频谱分析点在当前块内，保存完整频谱
-                if spectrum_point is not None and spectrum_raw_data is not None:
-                    x, y = spectrum_point
-                    if ty <= y < ey and tx <= x < ex:
-                        local_y = y - ty
-                        local_x = x - tx
-                        C_point = C[:, local_y, local_x]
-                        C_magnitude_point = np.abs(C_point)
-                        
-                        # 构建完整的频谱数据字典
-                        spectrum_data = {
-                            'spectrum': C_magnitude_point / N,  # 归一化的频谱幅值
-                            'spectrum_raw': C_magnitude_point,   # 原始频谱幅值
-                            'spectrum_complex': C_point,         # 复数频谱
-                            'frequencies': np.arange(N),         # 频率坐标
-                            'peak_index': int(disparity[y, x]),  # 最大峰值索引
-                            'peak_value': float(peak[y, x]),     # 最大峰值强度
-                            'point': (x, y),
-                            'direction': direction,
-                            'N': N,
-                            'num_frequencies': num_frequencies,
-                            'frequency_step': self.frequency_step,  # 频率步长
-                            # 添加原始数据
-                            'I0': spectrum_raw_data['I0'],
-                            'I1': spectrum_raw_data['I1'],
-                            'I2': spectrum_raw_data['I2'],
-                            'I3': spectrum_raw_data['I3'],
-                            'Dc': spectrum_raw_data['Dc'],
-                            'Ds': spectrum_raw_data['Ds'],
-                        }
-                        
-                        print(f"\n\n  ⚡ [频谱分析] 点 ({x}, {y}) 的完整频谱已保存")
-                        print(f"    频谱长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
-                        print(f"    最大峰值位置: {spectrum_data['peak_index']}")
-                        print(f"    最大峰值强度: {spectrum_data['peak_value']:.4f}")
-                        
-                        # 找出前10个峰值
-                        top10_indices = np.argsort(C_magnitude_point)[-10:][::-1]
-                        print(f"    频谱前10个峰值:")
-                        for i, idx in enumerate(top10_indices):
-                            print(f"      #{i+1}: 投影仪坐标={idx:4d}, 强度={C_magnitude_point[idx]/N:.4f}")
-                        print()
+                if spectrum_raw_data:
+                    for point_idx, raw_data in spectrum_raw_data.items():
+                        x, y = raw_data['point']
+                        if ty <= y < ey and tx <= x < ex:
+                            local_y = y - ty
+                            local_x = x - tx
+                            C_point = C[:, local_y, local_x]
+                            C_magnitude_point = np.abs(C_point)
+                            
+                            if spectrum_data is None:
+                                spectrum_data = {}
+                                
+                            # 构建完整的频谱数据字典
+                            spectrum_data[point_idx] = {
+                                'spectrum': C_magnitude_point / N,  # 归一化的频谱幅值
+                                'spectrum_raw': C_magnitude_point,   # 原始频谱幅值
+                                'spectrum_complex': C_point,         # 复数频谱
+                                'frequencies': np.arange(N),         # 频率坐标
+                                'peak_index': int(disparity[y, x]),  # 最大峰值索引
+                                'peak_value': float(peak[y, x]),     # 最大峰值强度
+                                'point': (x, y),
+                                'direction': direction,
+                                'N': N,
+                                'num_frequencies': num_frequencies,
+                                'frequency_step': self.frequency_step,  # 频率步长
+                                # 添加原始数据
+                                'I0': raw_data['I0'],
+                                'I1': raw_data['I1'],
+                                'I2': raw_data['I2'],
+                                'I3': raw_data['I3'],
+                                'Dc': raw_data['Dc'],
+                                'Ds': raw_data['Ds'],
+                            }
+                            
+                            print(f"\n\n  ⚡ [频谱分析] 点{point_idx+1} ({x}, {y}) 的完整频谱已保存")
+                            print(f"    频谱长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
+                            print(f"    最大峰值位置: {spectrum_data[point_idx]['peak_index']}")
+                            print(f"    最大峰值强度: {spectrum_data[point_idx]['peak_value']:.4f}")
+                            
+                            # 找出前10个峰值
+                            top10_indices = np.argsort(C_magnitude_point)[-10:][::-1]
+                            print(f"    频谱前10个峰值:")
+                            for i, idx in enumerate(top10_indices):
+                                print(f"      #{i+1}: 投影仪坐标={idx:4d}, 强度={C_magnitude_point[idx]/N:.4f}")
+                            print()
         
         print()  # 换行
         
