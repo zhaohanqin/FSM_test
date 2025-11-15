@@ -439,8 +439,8 @@ def main():
     
     # -------------------- 1. 路径配置 --------------------
     BASE_DIR = r"D:\在校学习\FSM"                                    # 基础目录
-    RESULT_DIR = os.path.join(BASE_DIR, "results", "fsa_decode")   # 解码结果目录
-    OUTPUT_DIR = os.path.join(BASE_DIR, "results", "visualizations") # 可视化输出目录
+    RESULT_DIR = os.path.join(BASE_DIR, "results19201080", "fsa_decode")   # 解码结果目录
+    OUTPUT_DIR = os.path.join(BASE_DIR, "results19201080", "visualizations") # 可视化输出目录
     
     # -------------------- 2. 峰值阈值设置 --------------------
     # 🔥 统一峰值阈值 - 修改这一个参数，就可以改变所有可视化的阈值！

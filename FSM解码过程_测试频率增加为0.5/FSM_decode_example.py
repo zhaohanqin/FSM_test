@@ -143,10 +143,16 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
         print("   有效值: 'both', 'ver', 'hor'")
         return None
     
+    # 根据频率步长计算实际用于解码的投影仪分辨率
+    # 当频率步长为0.5时，需要2倍分辨率才能覆盖完整的投影仪范围
+    DECODER_WIDTH = int(PROJECTOR_WIDTH / FREQUENCY_STEP)
+    DECODER_HEIGHT = int(PROJECTOR_HEIGHT / FREQUENCY_STEP)
+    
     print("="*80)
     print("FSA 解码程序")
     print("="*80)
-    print(f"投影仪分辨率: {PROJECTOR_WIDTH} × {PROJECTOR_HEIGHT}")
+    print(f"输入投影仪分辨率: {PROJECTOR_WIDTH} × {PROJECTOR_HEIGHT}")
+    print(f"解码用投影仪分辨率: {DECODER_WIDTH} × {DECODER_HEIGHT} (根据频率步长 {FREQUENCY_STEP} 调整)")
     print(f"采集频率数: {NUM_FREQUENCIES}")
     print(f"频率步长: {FREQUENCY_STEP} Hz")
     print(f"最高频率: {(NUM_FREQUENCIES-1) * FREQUENCY_STEP} Hz")
@@ -159,13 +165,15 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     elif DECODE_DIRECTION == "hor":
         print("  → 仅解码水平条纹，获得投影仪行坐标（Y坐标）")
     print(f"输出目录: {OUTPUT_DIR}")
+    if FREQUENCY_STEP != 1.0:
+        print(f"\n⚠ 注意: 频率步长为 {FREQUENCY_STEP}，解码结果将裁剪回输入分辨率 {PROJECTOR_WIDTH} × {PROJECTOR_HEIGHT}")
     print("="*80)
     
     # 创建输出目录
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # 创建解码器实例
-    decoder = FSADecoder(PROJECTOR_WIDTH, PROJECTOR_HEIGHT, FREQUENCY_STEP)
+    # 创建解码器实例（使用调整后的分辨率）
+    decoder = FSADecoder(DECODER_WIDTH, DECODER_HEIGHT, FREQUENCY_STEP)
     
     # ==================== 解码水平方向 ====================
     if DECODE_DIRECTION in ["both", "hor"]:
@@ -194,17 +202,25 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
                 spectrum_points=SPECTRUM_POINTS 
             )
             
-            # 保存结果
-            decoder.save_results(disparity_hor, peak_hor, OUTPUT_DIR, 'hor')
+            # 裁剪结果到原始投影仪分辨率范围
+            # 只保留在 [0, PROJECTOR_HEIGHT) 范围内的值
+            valid_mask_hor = (disparity_hor >= 0) & (disparity_hor < PROJECTOR_HEIGHT)
+            disparity_hor_clipped = np.where(valid_mask_hor, disparity_hor, np.nan)
+            peak_hor_clipped = np.where(valid_mask_hor, peak_hor, 0.0)
             
-            # 显示质量统计
-            print("\n质量评估（水平方向）:")
-            print(f"  高质量像素 (peak > 1.0): {np.sum(peak_hor > 1.0)} "
-                  f"({np.sum(peak_hor > 1.0) / peak_hor.size * 100:.2f}%)")
-            print(f"  中等质量像素 (0.5 < peak ≤ 1.0): {np.sum((peak_hor > 0.5) & (peak_hor <= 1.0))} "
-                  f"({np.sum((peak_hor > 0.5) & (peak_hor <= 1.0)) / peak_hor.size * 100:.2f}%)")
-            print(f"  低质量像素 (peak ≤ 0.5): {np.sum(peak_hor <= 0.5)} "
-                  f"({np.sum(peak_hor <= 0.5) / peak_hor.size * 100:.2f}%)")
+            # 保存裁剪后的结果
+            decoder.save_results(disparity_hor_clipped, peak_hor_clipped, OUTPUT_DIR, 'hor')
+            
+            # 显示质量统计（使用裁剪后的数据）
+            print("\n质量评估（水平方向，裁剪后）:")
+            valid_count = np.sum(valid_mask_hor)
+            print(f"  有效像素数: {valid_count}/{valid_mask_hor.size} ({valid_count/valid_mask_hor.size*100:.2f}%)")
+            print(f"  高质量像素 (peak > 1.0): {np.sum(peak_hor_clipped > 1.0)} "
+                  f"({np.sum(peak_hor_clipped > 1.0) / valid_mask_hor.size * 100:.2f}%)")
+            print(f"  中等质量像素 (0.5 < peak ≤ 1.0): {np.sum((peak_hor_clipped > 0.5) & (peak_hor_clipped <= 1.0))} "
+                  f"({np.sum((peak_hor_clipped > 0.5) & (peak_hor_clipped <= 1.0)) / valid_mask_hor.size * 100:.2f}%)")
+            print(f"  低质量像素 (peak ≤ 0.5): {np.sum(peak_hor_clipped <= 0.5)} "
+                  f"({np.sum(peak_hor_clipped <= 0.5) / valid_mask_hor.size * 100:.2f}%)")
             
         except Exception as e:
             print(f"\n❌ 错误: {e}")
@@ -243,17 +259,25 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
                 spectrum_points=SPECTRUM_POINTS  # 总是传入，不管是什么模式
             )
             
-            # 保存结果
-            decoder.save_results(disparity_ver, peak_ver, OUTPUT_DIR, 'ver')
+            # 裁剪结果到原始投影仪分辨率范围
+            # 只保留在 [0, PROJECTOR_WIDTH) 范围内的值
+            valid_mask_ver = (disparity_ver >= 0) & (disparity_ver < PROJECTOR_WIDTH)
+            disparity_ver_clipped = np.where(valid_mask_ver, disparity_ver, np.nan)
+            peak_ver_clipped = np.where(valid_mask_ver, peak_ver, 0.0)
             
-            # 显示质量统计
-            print("\n质量评估（垂直方向）:")
-            print(f"  高质量像素 (peak > 1.0): {np.sum(peak_ver > 1.0)} "
-                  f"({np.sum(peak_ver > 1.0) / peak_ver.size * 100:.2f}%)")
-            print(f"  中等质量像素 (0.5 < peak ≤ 1.0): {np.sum((peak_ver > 0.5) & (peak_ver <= 1.0))} "
-                  f"({np.sum((peak_ver > 0.5) & (peak_ver <= 1.0)) / peak_ver.size * 100:.2f}%)")
-            print(f"  低质量像素 (peak ≤ 0.5): {np.sum(peak_ver <= 0.5)} "
-                  f"({np.sum(peak_ver <= 0.5) / peak_ver.size * 100:.2f}%)")
+            # 保存裁剪后的结果
+            decoder.save_results(disparity_ver_clipped, peak_ver_clipped, OUTPUT_DIR, 'ver')
+            
+            # 显示质量统计（使用裁剪后的数据）
+            print("\n质量评估（垂直方向，裁剪后）:")
+            valid_count = np.sum(valid_mask_ver)
+            print(f"  有效像素数: {valid_count}/{valid_mask_ver.size} ({valid_count/valid_mask_ver.size*100:.2f}%)")
+            print(f"  高质量像素 (peak > 1.0): {np.sum(peak_ver_clipped > 1.0)} "
+                  f"({np.sum(peak_ver_clipped > 1.0) / valid_mask_ver.size * 100:.2f}%)")
+            print(f"  中等质量像素 (0.5 < peak ≤ 1.0): {np.sum((peak_ver_clipped > 0.5) & (peak_ver_clipped <= 1.0))} "
+                  f"({np.sum((peak_ver_clipped > 0.5) & (peak_ver_clipped <= 1.0)) / valid_mask_ver.size * 100:.2f}%)")
+            print(f"  低质量像素 (peak ≤ 0.5): {np.sum(peak_ver_clipped <= 0.5)} "
+                  f"({np.sum(peak_ver_clipped <= 0.5) / valid_mask_ver.size * 100:.2f}%)")
             
         except Exception as e:
             print(f"\n❌ 错误: {e}")
@@ -418,8 +442,11 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     # 创建图形 (2行4列布局，但只用7个子图)
     fig = plt.figure(figsize=(20, 10))
     
-    # 计算实际频率轴
-    freq_axis = np.arange(M) * frequency_step  # 实际频率值
+    # 计算实际频率轴 - 使用实际数组长度而不是M，避免维度不匹配
+    actual_length = len(spectrum_data['I0'])  # 获取I0数组的实际长度
+    if actual_length != M:
+        print(f"⚠ 警告: 频率数量M={M}，但实际数据长度为{actual_length}，使用实际长度生成频率轴")
+    freq_axis = np.arange(actual_length) * frequency_step  # 实际频率值
     
     # 1. 原始强度序列
     ax1 = plt.subplot(2, 4, 1)
@@ -897,16 +924,21 @@ def main():
     # ========================================================================
     
     # -------------------- 1. 投影仪参数 --------------------
-    PROJECTOR_WIDTH = 1920      # 投影仪宽度（像素）
-    PROJECTOR_HEIGHT = 1080     # 投影仪高度（像素）
+    # ⚠ 重要说明：当频率步长 FREQUENCY_STEP = 0.5 时，这里应该输入目标投影仪分辨率的2倍
+    # 例如：目标分辨率是 1920×1080，频率步长为0.5时，这里应该设置为 3840×2160
+    # 程序会自动根据频率步长调整解码分辨率，并将结果裁剪回目标分辨率范围
+    PROJECTOR_WIDTH = 1920      # 投影仪宽度（像素）- 当频率步长为0.5时，这是目标宽度的2倍
+    PROJECTOR_HEIGHT = 1080     # 投影仪高度（像素）- 当频率步长为0.5时，这是目标高度的2倍
     
     # -------------------- 2. FSA采集参数 --------------------
     NUM_FREQUENCIES = 301       # 采集的频率数量（M值）
                                 # 注意：总图像数 = NUM_FREQUENCIES × 4 (四步相移)
-    FREQUENCY_STEP = 0.5        # 频率步长（Hz）
+    FREQUENCY_STEP = 0.25        # 频率步长（Hz）
                                 # 1.0: 标准步长，频率为 0, 1, 2, ..., 150 Hz
-                                # 0.5: 精细步长，频率为 0, 0.5, 1.0, ..., 75 Hz
+                                # 0.5: 精细步长，频率为 0, 0.5, 1.0, ..., 150 Hz
                                 # 当步长为0.5时，需要301个频率才能达到150Hz
+                                # ⚠ 注意：当频率步长为0.5时，PROJECTOR_WIDTH 和 PROJECTOR_HEIGHT 
+                                #   应该设置为目标分辨率的2倍（程序会自动裁剪结果）
     
     # -------------------- 3. 解码方向选择 --------------------
     # 控制解码哪个方向：
@@ -919,7 +951,7 @@ def main():
     # 请根据实际情况修改以下路径
     IMAGE_DIR_HOR = r"F:\Projector_images\images_FSM\04_bookshelf_white_cycle0_5\FSM_horizontal_f0_f150"  # 水平条纹图像文件夹
     IMAGE_DIR_VER = r"F:\Projector_images\images_FSM\04_bookshelf_white_cycle0_5\FSM_vertical_f0_f150"    # 垂直条纹图像文件夹
-    OUTPUT_DIR = r"d:\在校学习\FSM\results\fsa_decode"  # 输出结果文件夹
+    OUTPUT_DIR = r"d:\在校学习\FSM\results19201080\fsa_decode"  # 输出结果文件夹
     # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
     
     # -------------------- 5. 处理参数 --------------------
@@ -953,7 +985,7 @@ def main():
     #   SPECTRUM_POINTS = None                             # 不进行频谱分析
     #
     # 注意：每个像素点的频谱数据将保存在独立的文件夹中
-    SPECTRUM_POINTS = None # [(1200, 1000), (800, 600), (1500, 800)]  # 设为None则不进行频谱分析
+    SPECTRUM_POINTS = (1200, 1000) # [(1200, 1000), (800, 600), (1500, 800)]  # 设为None则不进行频谱分析
     
     # ========================================================================
     # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改

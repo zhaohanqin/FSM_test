@@ -1,6 +1,5 @@
 data
-results1
-results
+results*
 *.png
 *.jpg
 *.jpeg
