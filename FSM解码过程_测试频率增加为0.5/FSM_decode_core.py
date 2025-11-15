@@ -1,4 +1,4 @@
- """
+"""
 FSA (Frequency Shift Analysis) 频移法解码核心模块（重构版）
 
 本模块实现了频移法的核心DFT解码算法，用于从采集的条纹图像中
@@ -280,9 +280,10 @@ class DFTProcessor:
         signal : np.ndarray
             输入信号
         N : int
-            投影仪尺寸（像素数），这是DFT的长度
+            DFT长度。当frequency_step=1.0时，N通常等于投影仪尺寸；
+            当frequency_step=0.5时，N应该等于频率数量M（M=2×投影仪尺寸）
         frequency_step : float
-            频率步长，默认为1.0（此参数不影响DFT长度）
+            频率步长，默认为1.0（此参数用于文档说明，不影响DFT计算）
         axis : int
             沿哪个轴进行FFT，默认为0
             
@@ -293,8 +294,11 @@ class DFTProcessor:
             
         说明:
         -----
-        DFT长度始终等于投影仪尺寸N，不受频率步长影响。
-        频率步长只影响采集的频率数量，不影响投影仪坐标范围。
+        【重要】DFT长度N的选择：
+        - 当frequency_step=1.0时：N = 投影仪尺寸（频率数量M = 投影仪尺寸）
+        - 当frequency_step=0.5时：N = 频率数量M（M = 2×投影仪尺寸）
+        
+        这样可以充分利用所有频率信息，获得更高的频率分辨率。
         """
         return np.fft.fft(signal, n=N, axis=axis)
     
@@ -575,7 +579,6 @@ class FSADecoder:
                                      direction: str,
                                      num_frequencies: int,
                                      N: int,
-                                     coord_scale: float,
                                      debug_point: Optional[Tuple[int, int]] = None,
                                      spectrum_points: Optional[Union[Tuple[int, int], List[Tuple[int, int]]]] = None) -> Tuple[np.ndarray, np.ndarray, Optional[dict]]:
         """
@@ -659,13 +662,17 @@ class FSADecoder:
                 signal = D_row[:, col]  # (M,)
                 
                 # DFT
-                C = DFTProcessor.perform_dft(signal.reshape(-1, 1), N, self.frequency_step, axis=0)
-                C_magnitude = DFTProcessor.compute_magnitude_spectrum(C)
+                # 【关键改进】当frequency_step=0.5时，使用M作为DFT长度，而不是投影仪分辨率
+                # N已经是num_frequencies，所以这里使用N是正确的
+                C = np.fft.fft(signal, n=N)
+                C_magnitude = np.abs(C)
                 
-                # 寻找峰值（直接对应投影仪坐标）
-                peak_idx = PeakDetector.find_peak_index(C_magnitude.squeeze(), axis=0)
-                
-                peak_value = C_magnitude.squeeze()[peak_idx] / N
+                # 寻找峰值
+                # 注意：这里得到的是频率索引，后续需要映射到投影仪坐标
+                peak_idx = np.argmax(C_magnitude)
+                # 【关键改进】归一化应该除以DFT长度N（即频率数量），而不是num_frequencies
+                # 虽然N=num_frequencies，但为了代码清晰性和一致性，使用N
+                peak_value = C_magnitude[peak_idx] / N
                 
                 # 检查是否是频谱分析点，保存完整频谱
                 for point_idx in current_row_spectrum_data:
@@ -674,18 +681,24 @@ class FSADecoder:
                         if spectrum_data is None:
                             spectrum_data = {}
                         
+                        # 计算坐标映射比例（低内存模式中需要重新计算）
+                        if direction == "hor":
+                            coord_scale_low = self.proj_height / num_frequencies
+                        else:
+                            coord_scale_low = self.proj_width / num_frequencies
+                        
                         spectrum_data[point_idx] = {
-                            'spectrum': C_magnitude.squeeze() / N,            # 归一化频谱幅值
-                            'spectrum_raw': C_magnitude.squeeze().copy(),     # 原始频谱幅值
-                            'spectrum_complex': C.squeeze().copy(),           # 复数频谱
-                            'frequencies': np.arange(N),                      # 投影仪坐标轴
-                            'peak_index': int(peak_idx),                      # 峰值索引（投影仪坐标）
-                            'peak_value': float(peak_value),                  # 最大峰值强度
+                            'spectrum': C_magnitude / N,            # 归一化频谱幅值
+                            'spectrum_raw': C_magnitude.copy(),     # 原始频谱幅值
+                            'spectrum_complex': C.copy(),           # 复数频谱
+                            'frequencies': np.arange(N),            # 频率索引坐标 [0, N-1]
+                            'peak_index': int(peak_idx),            # 最大峰值频率索引（映射前）
+                            'peak_value': float(peak_value),        # 最大峰值强度
                             'point': (col, row),
                             'direction': direction,
-                            'N': N,
-                            'num_frequencies': num_frequencies,
-                            'frequency_step': self.frequency_step,            # 频率步长
+                            'N': N,                                 # DFT长度（频率数量）
+                            'num_frequencies': num_frequencies,     # 频率数量M
+                            'frequency_step': self.frequency_step,  # 频率步长（Hz）
                             # 添加原始数据
                             'I0': point_data['I0'],
                             'I1': point_data['I1'],
@@ -696,16 +709,18 @@ class FSADecoder:
                         }
                         
                         print(f"\n\n  ⚡ [频谱分析] 点{point_idx+1} ({col}, {row}) 的完整频谱已保存")
-                        print(f"    频谱长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
-                        print(f"    频率步长: {self.frequency_step}")
-                        print(f"    峰值索引: {peak_idx} (投影仪坐标)")
+                        print(f"    频谱长度: {N} (频率数量，DFT长度)")
+                        print(f"    频率步长: {self.frequency_step} Hz")
+                        print(f"    最大峰值频率索引: {peak_idx}")
+                        print(f"    最大峰值投影仪坐标: {peak_idx * coord_scale_low:.2f}")
                         print(f"    最大峰值强度: {peak_value:.4f}")
                         
                         # 找出前10个峰值
-                        top10_indices = np.argsort(C_magnitude.squeeze())[-10:][::-1]
+                        top10_indices = np.argsort(C_magnitude)[-10:][::-1]
                         print(f"    频谱前10个峰值:")
                         for i, idx in enumerate(top10_indices):
-                            print(f"      #{i+1}: 投影仪坐标={idx:4d}, 强度={C_magnitude.squeeze()[idx]/N:.4f}")
+                            mapped_coord = idx * coord_scale_low
+                            print(f"      #{i+1}: 频率索引={idx:4d}, 投影仪坐标={mapped_coord:7.2f}, 强度={C_magnitude[idx]/N:.4f}")
                         print()
                 
                 # 子像素精度（质心法）
@@ -713,20 +728,20 @@ class FSADecoder:
                     idx_left = (peak_idx - 1) % N
                     idx_right = (peak_idx + 1) % N
                     
-                    val_left = C_magnitude.squeeze()[idx_left]
-                    val_center = C_magnitude.squeeze()[peak_idx]
-                    val_right = C_magnitude.squeeze()[idx_right]
+                    val_left = C_magnitude[idx_left]
+                    val_center = C_magnitude[peak_idx]
+                    val_right = C_magnitude[idx_right]
                     
                     if val_left + val_center + val_right > 0:
                         offset = (val_right - val_left) / (val_left + val_center + val_right)
-                        refined_coord = peak_idx + offset * 0.5
+                        refined_freq_index = peak_idx + offset * 0.5
                     else:
-                        refined_coord = float(peak_idx)
+                        refined_freq_index = float(peak_idx)
                 else:
-                    refined_coord = float(peak_idx)
+                    refined_freq_index = float(peak_idx)
                 
-                # 保存结果（投影仪坐标）
-                disparity[row, col] = refined_coord
+                # 保存结果（频率索引，后续统一映射）
+                disparity[row, col] = refined_freq_index
                 peak[row, col] = peak_value
             
             # 输出调试信息
@@ -809,31 +824,29 @@ class FSADecoder:
            投影仪坐标 = argmax(|C|)
            峰值强度 = max(|C|) / N  (归一化)
         """
-        # 确定投影仪尺寸
-        if direction == "hor":
-            N = self.proj_height  # 水平条纹解码投影仪行坐标
-        else:
-            N = self.proj_width   # 垂直条纹解码投影仪列坐标
+        # 确定DFT长度（使用频率数量，而不是投影仪尺寸）
+        # 【关键改进】当frequency_step=0.5时，M=2*N，需要使用M作为DFT长度
+        # 这样可以充分利用所有频率信息，获得更高的频率分辨率
+        N = num_frequencies  # DFT长度 = 频率数量M
         
-        # 计算坐标映射比例（基于数学分析的正确修复）
-        # 数学原理：x_p = k * frequency_step * W / M
-        # 其中：k是DFT峰值索引，frequency_step是频率步长，W是投影仪尺寸，M是频率数量
-        # DFT长度应该使用M（频率数量），而不是W（投影仪尺寸）
-        frequency_range = (num_frequencies - 1) * self.frequency_step
+        # 计算坐标映射比例（频率索引 → 投影仪坐标）
+        # 【关键改进】当frequency_step=0.5时，需要将频率索引映射到投影仪坐标
+        # 映射公式：投影仪坐标 = 频率索引 * (投影仪分辨率 / 频率数量)
         if direction == "hor":
-            coord_scale = self.frequency_step * self.proj_height / num_frequencies
+            coord_scale = self.proj_height / num_frequencies
         else:
-            coord_scale = self.frequency_step * self.proj_width / num_frequencies
+            coord_scale = self.proj_width / num_frequencies
         
         print(f"\n{'='*60}")
         print(f"开始解码 {direction} 方向 (投影仪{'行' if direction == 'hor' else '列'}坐标)")
         print(f"图像数量: {images.shape[0]} ({num_frequencies} 频率 × 4 相移)")
         print(f"图像尺寸: {images.shape[1]} × {images.shape[2]}")
-        print(f"投影仪尺寸: {N}")
-        print(f"频率数量: {num_frequencies}")
-        print(f"频率步长: {self.frequency_step}")
-        print(f"频率范围: 0 到 {frequency_range:.1f} Hz")
-        print(f"坐标映射比例: {coord_scale:.3f} (Hz → 投影仪坐标)")
+        print(f"频率步长: {self.frequency_step} Hz")
+        print(f"最高频率: {(num_frequencies-1) * self.frequency_step} Hz")
+        print(f"DFT长度: {N} (使用频率数量，而非投影仪分辨率)")
+        print(f"坐标映射比例: {coord_scale:.3f} (频率索引 → 投影仪坐标)")
+        if self.frequency_step != 1.0:
+            print(f"⚠ 注意: 频率步长为{self.frequency_step}，将应用坐标映射")
         if low_memory:
             print(f"模式: 低内存模式 (逐行处理)")
         print(f"{'='*60}")
@@ -841,10 +854,12 @@ class FSADecoder:
         # 如果启用低内存模式，使用逐行处理
         if low_memory:
             disparity, peak_values, spectrum_data = self._decode_direction_low_memory(
-                images, direction, num_frequencies, N, coord_scale,
+                images, direction, num_frequencies, N, 
                 debug_point, spectrum_points
             )
-            return disparity, peak_values, spectrum_data
+            # 应用坐标映射
+            disparity_mapped = disparity * coord_scale
+            return disparity_mapped, peak_values, spectrum_data
         
         # 步骤1: 提取四个相移图像序列（边提取边转换为float32，节省内存）
         print("\n步骤1: 提取四步相移图像序列...")
@@ -953,24 +968,25 @@ class FSADecoder:
                 # D_block: 形状为 (M, block_h, block_w)
                 D_block = D[:, ty:ey, tx:ex]
                 
-                # 执行DFT变换（使用频率数量作为DFT长度）
+                # 执行DFT变换
+                # np.fft.fft 沿 axis=0 方向进行FFT
                 # 输入: (M, block_h, block_w) - M个频率点
-                # 输出: (M, block_h, block_w) - M个频率分量（M=频率数量）
-                C = DFTProcessor.perform_dft(D_block, num_frequencies, self.frequency_step, axis=0)
+                # 输出: (N, block_h, block_w) - N个频率分量（N=M，即频率数量）
+                # 【关键改进】当frequency_step=0.5时，使用M作为DFT长度，而不是投影仪分辨率
+                # 这样可以充分利用所有频率信息，提高频率分辨率
+                C = np.fft.fft(D_block, n=N, axis=0)
                 
                 # 计算幅值谱
-                C_magnitude = DFTProcessor.compute_magnitude_spectrum(C)
+                C_magnitude = np.abs(C)  # 形状: (N, block_h, block_w)
                 
-                # 找到最大峰值位置（DFT索引）
-                peak_indices = PeakDetector.find_peak_index(C_magnitude, axis=0)
-                
-                # 应用正确的坐标映射
-                projector_coords = peak_indices * coord_scale
-                
-                disparity[ty:ey, tx:ex] = projector_coords
+                # 找到最大峰值位置（沿频率轴）
+                # 注意：这里得到的是频率索引，后续需要映射到投影仪坐标
+                freq_index = np.argmax(C_magnitude, axis=0)  # 频率索引
+                disparity[ty:ey, tx:ex] = freq_index  # 先保存频率索引，后续统一映射
                 
                 # 记录峰值强度（归一化）
-                peak[ty:ey, tx:ex] = np.max(C_magnitude, axis=0) / num_frequencies
+                # 【关键改进】归一化应该除以DFT长度N（即频率数量），而不是固定的投影仪分辨率
+                peak[ty:ey, tx:ex] = np.max(C_magnitude, axis=0) / N
                 
                 # 更新进度
                 processed_blocks += 1
@@ -990,12 +1006,14 @@ class FSADecoder:
                         peak_value = peak[y, x]
                         
                         print(f"\n\n  [调试] 点 ({x}, {y}) 的DFT结果:")
-                        print(f"    投影仪坐标: {disp_value:.2f}")
+                        print(f"    频率索引: {disp_value:.2f} (映射前)")
+                        print(f"    投影仪坐标: {disp_value * coord_scale:.2f} (映射后)")
                         print(f"    峰值强度: {peak_value:.4f}")
                         print(f"    频谱前5个峰值:")
                         top5_indices = np.argsort(C_point)[-5:][::-1]
                         for i, idx in enumerate(top5_indices):
-                            print(f"      #{i+1}: 位置={idx}, 强度={C_point[idx]/N:.4f}")
+                            mapped_coord = idx * coord_scale
+                            print(f"      #{i+1}: 频率索引={idx}, 投影仪坐标={mapped_coord:.2f}, 强度={C_point[idx]/N:.4f}")
                         print()
                 
                 # 如果频谱分析点在当前块内，保存完整频谱
@@ -1012,18 +1030,19 @@ class FSADecoder:
                                 spectrum_data = {}
                                 
                             # 构建完整的频谱数据字典
+                            peak_freq_index = int(disparity[y, x])  # 频率索引（映射前）
                             spectrum_data[point_idx] = {
                                 'spectrum': C_magnitude_point / N,  # 归一化的频谱幅值
                                 'spectrum_raw': C_magnitude_point,   # 原始频谱幅值
                                 'spectrum_complex': C_point,         # 复数频谱
-                                'frequencies': np.arange(N),         # 频率坐标
-                                'peak_index': int(disparity[y, x]),  # 最大峰值索引
+                                'frequencies': np.arange(N),         # 频率索引坐标 [0, N-1]
+                                'peak_index': peak_freq_index,       # 最大峰值频率索引（映射前）
                                 'peak_value': float(peak[y, x]),     # 最大峰值强度
                                 'point': (x, y),
                                 'direction': direction,
-                                'N': N,
-                                'num_frequencies': num_frequencies,
-                                'frequency_step': self.frequency_step,  # 频率步长
+                                'N': N,                              # DFT长度（频率数量）
+                                'num_frequencies': num_frequencies,  # 频率数量M
+                                'frequency_step': self.frequency_step,  # 频率步长（Hz）
                                 # 添加原始数据
                                 'I0': raw_data['I0'],
                                 'I1': raw_data['I1'],
@@ -1033,33 +1052,43 @@ class FSADecoder:
                                 'Ds': raw_data['Ds'],
                             }
                             
+                            # 计算投影仪坐标（映射后）
+                            peak_proj_coord = peak_freq_index * coord_scale
+                            
                             print(f"\n\n  ⚡ [频谱分析] 点{point_idx+1} ({x}, {y}) 的完整频谱已保存")
-                            print(f"    频谱长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
-                            print(f"    最大峰值位置: {spectrum_data[point_idx]['peak_index']}")
+                            print(f"    频谱长度: {N} (频率数量，DFT长度)")
+                            print(f"    频率步长: {self.frequency_step} Hz")
+                            print(f"    最大峰值频率索引: {peak_freq_index} (映射前)")
+                            print(f"    最大峰值投影仪坐标: {peak_proj_coord:.2f} (映射后)")
                             print(f"    最大峰值强度: {spectrum_data[point_idx]['peak_value']:.4f}")
                             
                             # 找出前10个峰值
                             top10_indices = np.argsort(C_magnitude_point)[-10:][::-1]
                             print(f"    频谱前10个峰值:")
                             for i, idx in enumerate(top10_indices):
-                                print(f"      #{i+1}: 投影仪坐标={idx:4d}, 强度={C_magnitude_point[idx]/N:.4f}")
+                                mapped_coord = idx * coord_scale
+                                print(f"      #{i+1}: 频率索引={idx:4d}, 投影仪坐标={mapped_coord:7.2f}, 强度={C_magnitude_point[idx]/N:.4f}")
                             print()
         
         print()  # 换行
         
-        # 步骤4: 输出统计信息
-        print("\n步骤4: 解码完成，统计信息:")
-        print(f"  视差范围: [{disparity.min():.2f}, {disparity.max():.2f}]")
+        # 步骤4: 输出统计信息（映射前）
+        print("\n步骤4: 解码完成，统计信息（频率索引）:")
+        print(f"  频率索引范围: [{disparity.min():.2f}, {disparity.max():.2f}]")
         print(f"  峰值强度范围: [{peak.min():.4f}, {peak.max():.4f}]")
         print(f"  峰值强度均值: {peak.mean():.4f}")
         print(f"  峰值强度中值: {np.median(peak):.4f}")
         
-        # 应用坐标映射（频率索引 → 投影仪坐标）
+        # 步骤5: 应用坐标映射（频率索引 → 投影仪坐标）
+        # 【关键改进】当frequency_step=0.5时，需要将频率索引映射到投影仪坐标
+        # 映射公式：投影仪坐标 = 频率索引 * (投影仪分辨率 / 频率数量)
         disparity_mapped = disparity * coord_scale
-        print(f"\n步骤6: 应用坐标映射")
-        print(f"  映射比例: {coord_scale:.3f}")
-        print(f"  映射前范围: {disparity.min():.1f} - {disparity.max():.1f}")
-        print(f"  映射后范围: {disparity_mapped.min():.1f} - {disparity_mapped.max():.1f}")
+        print(f"\n步骤5: 应用坐标映射（频率索引 → 投影仪坐标）")
+        print(f"  映射比例: {coord_scale:.6f} = 投影仪分辨率 / 频率数量")
+        print(f"  频率索引范围: [{disparity.min():.1f}, {disparity.max():.1f}]")
+        print(f"  投影仪坐标范围: [{disparity_mapped.min():.1f}, {disparity_mapped.max():.1f}]")
+        if self.frequency_step != 1.0:
+            print(f"  ✓ 频率步长为{self.frequency_step}，已正确应用坐标映射")
         
         return disparity_mapped, peak, spectrum_data
     
