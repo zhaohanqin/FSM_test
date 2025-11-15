@@ -423,7 +423,7 @@ class PeakDetector:
 
 class FSADecoder:
     """
-    频移法解码协调器（重构版）
+    频移法解码协调器
     
     原理说明：
     --------
@@ -797,24 +797,34 @@ class FSADecoder:
            投影仪坐标 = argmax(|C|)
            峰值强度 = max(|C|) / N  (归一化)
         """
-        # 确定DFT长度（投影仪尺寸）
-        N = self.proj_height if direction == "hor" else self.proj_width
+        # 确定DFT长度（使用频率数量，而不是投影仪尺寸）
+        N = num_frequencies
+        
+        # 计算坐标映射比例（频率索引 → 投影仪坐标）
+        if direction == "hor":
+            coord_scale = self.proj_height / num_frequencies
+        else:
+            coord_scale = self.proj_width / num_frequencies
         
         print(f"\n{'='*60}")
         print(f"开始解码 {direction} 方向 (投影仪{'行' if direction == 'hor' else '列'}坐标)")
         print(f"图像数量: {images.shape[0]} ({num_frequencies} 频率 × 4 相移)")
         print(f"图像尺寸: {images.shape[1]} × {images.shape[2]}")
-        print(f"DFT长度: {N} (投影仪{'高度' if direction == 'hor' else '宽度'})")
+        print(f"DFT长度: {N} (频率数量)")
+        print(f"坐标映射比例: {coord_scale:.3f} (频率索引 → 投影仪坐标)")
         if low_memory:
             print(f"模式: 低内存模式 (逐行处理)")
         print(f"{'='*60}")
         
         # 如果启用低内存模式，使用逐行处理
         if low_memory:
-            return self._decode_direction_low_memory(
+            disparity, peak_values, spectrum_data = self._decode_direction_low_memory(
                 images, direction, num_frequencies, N, 
                 debug_point, spectrum_points
             )
+            # 应用坐标映射
+            disparity_mapped = disparity * coord_scale
+            return disparity_mapped, peak_values, spectrum_data
         
         # 步骤1: 提取四个相移图像序列（边提取边转换为float32，节省内存）
         print("\n步骤1: 提取四步相移图像序列...")
@@ -1020,7 +1030,14 @@ class FSADecoder:
         print(f"  峰值强度均值: {peak.mean():.4f}")
         print(f"  峰值强度中值: {np.median(peak):.4f}")
         
-        return disparity, peak, spectrum_data
+        # 应用坐标映射（频率索引 → 投影仪坐标）
+        disparity_mapped = disparity * coord_scale
+        print(f"\n步骤6: 应用坐标映射")
+        print(f"  映射比例: {coord_scale:.3f}")
+        print(f"  映射前范围: {disparity.min():.1f} - {disparity.max():.1f}")
+        print(f"  映射后范围: {disparity_mapped.min():.1f} - {disparity_mapped.max():.1f}")
+        
+        return disparity_mapped, peak, spectrum_data
     
     def save_results(self,
                     disparity: np.ndarray,
@@ -1065,9 +1082,9 @@ def demonstrate_fsa_decoding():
     print("="*80)
     
     # 配置参数
-    PROJECTOR_WIDTH = 1024   # 投影仪宽度
-    PROJECTOR_HEIGHT = 768   # 投影仪高度
-    NUM_FREQUENCIES = 121    # 采集的频率数量
+    PROJECTOR_WIDTH = 1920   # 投影仪宽度
+    PROJECTOR_HEIGHT = 1080   # 投影仪高度
+    NUM_FREQUENCIES = 151    # 采集的频率数量
     
     # 图像路径（需要根据实际情况修改）
     IMAGE_DIR_HOR = "./data/hor"  # 水平条纹图像文件夹

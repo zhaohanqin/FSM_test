@@ -905,8 +905,6 @@ def main():
                                 # 注意：总图像数 = NUM_FREQUENCIES × 4 (四步相移)
     FREQUENCY_STEP = 1.0        # 频率步长（Hz）
                                 # 1.0: 标准步长，频率为 0, 1, 2, ..., 150 Hz
-                                # 0.5: 精细步长，频率为 0, 0.5, 1.0, ..., 75 Hz
-                                # 当步长为0.5时，需要301个频率才能达到150Hz
     
     # -------------------- 3. 解码方向选择 --------------------
     # 控制解码哪个方向：
@@ -917,8 +915,8 @@ def main():
     
     # -------------------- 4. 图像路径配置 --------------------
     # 请根据实际情况修改以下路径
-    IMAGE_DIR_HOR = r"F:\FSM_horizontal_f0_f150_images"  # 水平条纹图像文件夹
-    IMAGE_DIR_VER = r"F:\FSM_vertical_f0_f150_images"    # 垂直条纹图像文件夹
+    IMAGE_DIR_HOR = r"F:\Projector_images\images_FSM\03_bookshelf_white_cycle1\FSM_horizontal_f0_f150"  # 水平条纹图像文件夹
+    IMAGE_DIR_VER = r"F:\Projector_images\images_FSM\03_bookshelf_white_cycle1\FSM_vertical_f0_f150"    # 垂直条纹图像文件夹
     OUTPUT_DIR = r"d:\在校学习\FSM\results\fsa_decode"  # 输出结果文件夹
     # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
     
@@ -953,7 +951,7 @@ def main():
     #   SPECTRUM_POINTS = None                             # 不进行频谱分析
     #
     # 注意：每个像素点的频谱数据将保存在独立的文件夹中
-    SPECTRUM_POINTS = [(1200, 1000), (800, 600), (1500, 800)]  # 设为None则不进行频谱分析
+    SPECTRUM_POINTS = None # [(1200, 1000), (800, 600), (1500, 800)]  # 设为None则不进行频谱分析
     
     # ========================================================================
     # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改

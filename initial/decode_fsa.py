@@ -1,4 +1,6 @@
 # 解码图像
+# FSA (Frequency Shift Analysis) 频移法解码
+# 原理：通过投影一系列频率递增的正弦条纹，使用DFT变换解码出投影仪坐标
 from turtle import color, distance
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,19 +13,70 @@ import cv2
 pyaoi.makedirs(fsa_result_path)
 
 
-M = 121
+M = 121  # 采集的频率数量（M个频率，每个频率4张相移图，共M*4张图像）
 
 
 
-ax, ay = 900,495
+ax, ay = 900,495  # 调试用的像素坐标
 # ax, ay = 1049,875
 
-debug = False
+debug = False  # 是否启用调试模式
 
-def decode_fsa(dir):
+def decode_fsa(dir, frequency_step=1.0):
+    """
+    FSA频移法解码函数
+    
+    参数:
+    -----
+    dir : str
+        解码方向，'hor'表示水平条纹（解码投影仪行坐标），'ver'表示垂直条纹（解码投影仪列坐标）
+    frequency_step : float
+        频率步长（Hz），默认为1.0。当设置为0.5时，频率间隔为0.5Hz，需要更多图像
+    
+    返回:
+    -----
+    disparity : np.ndarray
+        视差图（投影仪坐标），形状为(height, width)
+    peak : np.ndarray
+        峰值强度图（置信度），形状为(height, width)
+    
+    原理说明:
+    --------
+    1. 四步相移法：
+       每个频率投影4张图，相位分别为 0°, 90°, 180°, 270°
+       这样可以消除环境光和表面反射率的影响
+       
+    2. 复数信号构造：
+       Dc = I0 - I2  (余弦分量，消除直流分量)
+       Ds = I3 - I1  (正弦分量，消除直流分量)
+       D = Dc + j*Ds (构造复数信号，便于DFT变换)
+       
+    3. DFT变换：
+       对每个像素点的频率序列进行FFT变换，将时域（频率序列）转换到频域（投影仪坐标域）
+       频谱峰值位置即对应投影仪的坐标
+       
+    4. 峰值检测：
+       投影仪坐标 = argmax(|C|)  (找到频谱幅值的最大值位置)
+       峰值强度 = max(|C|) / N   (归一化的峰值强度，用于质量评估)
+    
+    频率步长说明:
+    -----------
+    - frequency_step = 1.0: 标准步长，频率为 0, 1, 2, ..., (M-1) Hz
+      此时频率数量M通常等于投影仪分辨率N，频率索引直接对应投影仪坐标
+      
+    - frequency_step = 0.5: 精细步长，频率为 0, 0.5, 1.0, ..., (M-1)*0.5 Hz
+      此时频率数量M = 2*N，需要将频率索引映射到投影仪坐标
+      映射公式：投影仪坐标 = 频率索引 * (投影仪分辨率 / 频率数量)
+    """
     cache_path = f"{fsa_result_path}/images_{dir}.npy"
 
+    # N是投影仪的分辨率（水平方向用W，垂直方向用H）
+    # 注意：当frequency_step=0.5时，M != N，需要后续映射
     N = H if dir == "hor" else W
+    
+    # 加载图像序列
+    # 图像组织方式：[freq0_0°, freq0_90°, freq0_180°, freq0_270°, freq1_0°, freq1_90°, ...]
+    # 共M个频率，每个频率4张相移图，总共M*4张图像
     if not os.path.exists(cache_path):
         print("load images...")
         images = np.array(pyaoi.imread(fsa_data_path+"/"+dir+"/{:d}.png",range(M*4)))
@@ -32,40 +85,101 @@ def decode_fsa(dir):
         images = np.load(cache_path)
 
     images = images.astype(np.float32)
-    I0 = images[0::4]
-    I1 = images[1::4]
-    I2 = images[2::4]
-    I3 = images[3::4]
+    
+    # 步骤1: 提取四个相移图像序列
+    # 从按频率组织的图像序列中，重新组织为按相位分组
+    # I0: 所有频率的0°相位图像，形状为(M, height, width)
+    I0 = images[0::4]  # 提取索引 0, 4, 8, 12, ... (所有0°图像)
+    I1 = images[1::4]  # 提取索引 1, 5, 9, 13, ... (所有90°图像)
+    I2 = images[2::4]  # 提取索引 2, 6, 10, 14, ... (所有180°图像)
+    I3 = images[3::4]  # 提取索引 3, 7, 11, 15, ... (所有270°图像)
 
+    # 步骤2: 构造复数信号
+    # Dc = I0 - I2: 余弦分量（实部），通过相减消除直流分量和环境光
+    # Ds = I3 - I1: 正弦分量（虚部），通过相减消除直流分量和环境光
+    # D = Dc + j*Ds: 构造复数信号，便于进行DFT变换
+    # 这个复数信号包含了每个频率下的相位信息
     Dc = I0 - I2
     Ds = I3 - I1
-    D = Dc + 1j*Ds
+    D = Dc + 1j*Ds  # 复数信号，形状为(M, height, width)
 
     if debug:
-        plt.plot(I0[:,ay,ax])
-        plt.plot(I2[:,ay,ax])
-        plt.plot(Dc[:,ay,ax])
+        # 调试：绘制某个像素点的强度序列
+        plt.plot(I0[:,ay,ax], label='I0 (0°)')
+        plt.plot(I2[:,ay,ax], label='I2 (180°)')
+        plt.plot(Dc[:,ay,ax], label='Dc (I0-I2)')
+        plt.legend()
+        plt.xlabel('频率索引')
+        plt.ylabel('强度')
+        plt.title(f'像素点({ax},{ay})的强度序列')
         plt.show()
 
+    # 初始化输出数组
+    disparity = np.empty(D.shape[1:],dtype=np.float32)  # 视差图（投影仪坐标）
+    peak = np.empty(D.shape[1:],dtype=np.float32)      # 峰值强度图（置信度）
 
-    disparity = np.empty(D.shape[1:],dtype=np.float32)
-    peak = np.empty(D.shape[1:],dtype=np.float32)
-
-    # 解出整张图的最大最小值
-    block_size = 100
+    # 步骤3: 分块DFT处理
+    # 分块处理可以降低内存占用，特别是对于大图像
+    block_size = 100  # 分块大小
     t = 0   
     total = ((D.shape[1]+block_size-1)//block_size) * ((D.shape[2]+block_size-1)//block_size)
 
-
     print(f"decode {dir}:")
+    print(f"  频率数量 M = {M}")
+    print(f"  投影仪分辨率 N = {N}")
+    print(f"  频率步长 = {frequency_step} Hz")
+    if frequency_step != 1.0:
+        print(f"  注意：频率步长为{frequency_step}，需要将频率索引映射到投影仪坐标")
+        coord_scale = N / M  # 坐标映射比例
+        print(f"  坐标映射比例 = {coord_scale:.4f}")
+    
     for ty in range(0,D.shape[1],block_size):
         for tx in range(0,D.shape[2],block_size):
+            # 当前块的范围
             ey = min(ty+block_size,D.shape[1])
             ex = min(tx+block_size,D.shape[2])
-                
-            C = np.abs(np.fft.fft(D[:,ty:ey,tx:ex],N,axis=0))
-            disparity[ty:ey,tx:ex] = np.argmax(C,axis=0)
-            peak[ty:ey,tx:ex] = np.max(C,axis=0)/N
+            
+            # 步骤3.1: 执行DFT变换
+            # np.fft.fft(D_block, n=N, axis=0)
+            # - D_block: 形状为(M, block_h, block_w)，包含当前块所有像素点的频率序列
+            # - n=N: DFT长度。当frequency_step=1.0时，N=M，频率索引直接对应投影仪坐标
+            #         当frequency_step=0.5时，M=2*N，需要使用M作为DFT长度，然后映射到投影仪坐标
+            # - axis=0: 沿频率维度进行FFT变换
+            # - 输出C: 形状为(N, block_h, block_w)，包含频谱信息
+            
+            # 【关键改进点1】当frequency_step=0.5时，应该使用M作为DFT长度，而不是N
+            # 这样可以充分利用所有频率信息，提高频率分辨率
+            if frequency_step == 1.0:
+                # 标准情况：频率数量M等于投影仪分辨率N，直接使用N作为DFT长度
+                fft_length = N
+            else:
+                # 频率步长不为1.0时：使用频率数量M作为DFT长度，以获得更高的频率分辨率
+                fft_length = M
+            
+            # 执行FFT变换
+            C = np.abs(np.fft.fft(D[:,ty:ey,tx:ex], n=fft_length, axis=0))
+            # C的形状为(fft_length, block_h, block_w)
+            # C[k]表示频率索引为k时的频谱幅值
+            
+            # 步骤3.2: 峰值检测
+            # 找到每个像素点频谱幅值的最大值位置，即投影仪坐标
+            # argmax返回的是频率索引，需要根据frequency_step映射到投影仪坐标
+            freq_index = np.argmax(C, axis=0)  # 频率索引，形状为(block_h, block_w)
+            
+            # 【关键改进点2】当frequency_step=0.5时，需要将频率索引映射到投影仪坐标
+            if frequency_step == 1.0:
+                # 标准情况：频率索引直接等于投影仪坐标
+                disparity[ty:ey,tx:ex] = freq_index
+            else:
+                # 频率步长不为1.0时：需要映射
+                # 映射公式：投影仪坐标 = 频率索引 * (投影仪分辨率 / 频率数量)
+                coord_scale = N / M
+                disparity[ty:ey,tx:ex] = freq_index * coord_scale
+            
+            # 步骤3.3: 计算峰值强度（归一化）
+            # 峰值强度用于评估解码质量，值越大表示该点的解码质量越好
+            # 归一化：除以DFT长度，使得峰值强度在[0, 1]范围内
+            peak[ty:ey,tx:ex] = np.max(C, axis=0) / fft_length
 
             # if tx >= ax and ex < ax and ty >= ay and ey < ay:
 
@@ -78,31 +192,58 @@ def decode_fsa(dir):
 
 
 
-def deal_one(dir):
+def deal_one(dir, frequency_step=1.0):
+    """
+    处理单个方向的解码结果
+    
+    参数:
+    -----
+    dir : str
+        解码方向，'hor'或'ver'
+    frequency_step : float
+        频率步长（Hz），默认为1.0
+    """
     disp_path = f"{fsa_result_path}/disp_{dir}.tiff"
     peak_path = f"{fsa_result_path}/peak_{dir}.tiff"
     if not os.path.exists(disp_path):
-        disparity,peak = decode_fsa(dir)
+        # 执行解码
+        disparity,peak = decode_fsa(dir, frequency_step=frequency_step)
+        # 保存结果
         pyaoi.imwrite(disparity,disp_path)
         pyaoi.imwrite(peak,peak_path)
     else:
+        # 如果结果已存在，直接加载
         disparity,peak = pyaoi.imread(disp_path),pyaoi.imread(peak_path)
     
-    print(disparity[ay,ax],peak[ay,ax])
+    # 输出调试点的解码结果
+    print(f"点({ax},{ay})的解码结果: 投影仪坐标={disparity[ay,ax]:.2f}, 峰值强度={peak[ay,ax]:.4f}")
 
+    # 阈值过滤：峰值强度低于阈值的点被认为是无效点
     thres = 1
+    # 将视差图转换为伪彩色图像，无效点用mask标记
     disp = pyaoi.convert_float_image(disparity,colormap="hsv",invalid_mask=peak < thres)
+    # 将峰值强度图转换为伪彩色图像，无效点用mask标记
     peak = pyaoi.convert_float_image(peak,colormap="hsv",invalid_mask=peak < thres)
     
     if debug:
+        # 调试模式下显示结果
         pyaoi.imshow([disp,peak],normal_window=True)
 
+    # 保存可视化结果
     pyaoi.imwrite(disp,f"{fsa_result_path}/disp_{dir}.bmp")
     pyaoi.imwrite(peak,f"{fsa_result_path}/peak_{dir}.bmp")
 
-def main():
-    deal_one("hor")
-    deal_one("ver")
+def main(frequency_step=1.0):
+    """
+    主函数：解码水平和垂直两个方向
+    
+    参数:
+    -----
+    frequency_step : float
+        频率步长（Hz），默认为1.0
+    """
+    deal_one("hor", frequency_step=frequency_step)
+    deal_one("ver", frequency_step=frequency_step)
     
 
 

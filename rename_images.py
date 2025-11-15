@@ -1,8 +1,9 @@
 """
-图像批量重命名工具
+图像批量重命名工具 (改进版)
 
 功能：
 - 将文件夹中的图像按顺序重命名为 0.png, 1.png, 2.png, ...
+- 支持子文件夹批量处理
 - 支持预览模式（不实际重命名，只显示将要进行的操作）
 - 支持备份原始文件名列表
 - 自动识别常见图像格式
@@ -10,17 +11,22 @@
 使用场景：
 - FSA解码需要按顺序命名的图像文件
 - 整理混乱命名的图像序列
+- 批量处理多个子文件夹的图像
 
 作者：基于FSA解码需求创建
 日期：2025-11-02
+更新：2025-11-14 - 添加子文件夹支持和配置参数
 """
 
 import os
 import shutil
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
 
 
 def natural_sort_key(path: Path) -> List:
@@ -230,111 +236,159 @@ class ImageRenamer:
         return success_count
 
 
-def rename_images_interactive():
+class BatchImageRenamer:
     """
-    交互式批量重命名工具
+    批量图像重命名工具类
+    用于处理包含多个子文件夹的大文件夹，支持多级文件夹结构
     """
-    print("="*80)
-    print("图像批量重命名工具")
-    print("="*80)
-    print("功能: 将文件夹中的图像按顺序重命名为 0.png, 1.png, 2.png, ...")
-    print("="*80)
     
-    # 获取目标文件夹
-    print("\n请输入目标文件夹路径:")
-    print("示例: E:\\在校学习\\fsa\\data\\fsa_test\\ver")
-    target_dir = input("路径: ").strip().strip('"').strip("'")
+    def __init__(self, root_dir: str, output_format: str = "png", max_depth: int = 3):
+        """
+        初始化批量重命名工具
+        
+        Parameters:
+        -----------
+        root_dir : str
+            根文件夹路径（包含子文件夹）
+        output_format : str
+            输出文件格式，默认为 "png"
+        max_depth : int
+            最大搜索深度，默认3级（1=仅根目录，2=二级目录，3=三级目录）
+        """
+        self.root_dir = Path(root_dir)
+        self.output_format = output_format
+        self.max_depth = max_depth
+        
+        if not self.root_dir.exists():
+            raise ValueError(f"根文件夹不存在: {root_dir}")
+        
+        if not self.root_dir.is_dir():
+            raise ValueError(f"路径不是文件夹: {root_dir}")
     
-    if not target_dir:
-        print("❌ 错误: 路径不能为空")
-        return
+    def find_image_subfolders(self) -> List[Path]:
+        """
+        查找包含图像的子文件夹（支持多级文件夹结构）
+        
+        Returns:
+        --------
+        List[Path]
+            包含图像的子文件夹路径列表
+        """
+        image_folders = []
+        
+        def search_folders(current_dir: Path, current_depth: int):
+            """
+            递归搜索包含图像的文件夹
+            """
+            if current_depth > self.max_depth:
+                return
+            
+            # 检查当前文件夹是否包含图像
+            try:
+                folder_renamer = ImageRenamer(str(current_dir))
+                if folder_renamer.get_image_files():
+                    image_folders.append(current_dir)
+                    return  # 如果当前文件夹包含图像，不再搜索子文件夹
+            except Exception:
+                pass
+            
+            # 如果当前文件夹不包含图像，继续搜索子文件夹
+            if current_depth < self.max_depth:
+                try:
+                    for item in current_dir.iterdir():
+                        if item.is_dir():
+                            search_folders(item, current_depth + 1)
+                except Exception:
+                    # 忽略无法访问的文件夹
+                    pass
+        
+        # 从根目录开始搜索
+        search_folders(self.root_dir, 1)
+        
+        return image_folders
     
-    try:
-        renamer = ImageRenamer(target_dir)
-    except Exception as e:
-        print(f"❌ 错误: {e}")
-        return
+    def process_folder(self, folder_path: Path, create_backup: bool = True, 
+                      use_temp_rename: bool = True) -> Tuple[bool, int]:
+        """
+        处理单个文件夹
+        
+        Parameters:
+        -----------
+        folder_path : Path
+            文件夹路径
+        create_backup : bool
+            是否创建备份
+        use_temp_rename : bool
+            是否使用临时重命名
+            
+        Returns:
+        --------
+        Tuple[bool, int]
+            (是否成功, 重命名文件数量)
+        """
+        try:
+            renamer = ImageRenamer(str(folder_path), self.output_format)
+            success_count = renamer.rename_images(create_backup, use_temp_rename)
+            return True, success_count
+        except Exception as e:
+            print(f"❌ 处理文件夹 {folder_path} 失败: {e}")
+            return False, 0
     
-    # 获取图像文件列表
-    image_files = renamer.get_image_files()
-    
-    if len(image_files) == 0:
-        print("\n❌ 错误: 文件夹中没有找到图像文件")
-        print(f"   支持的格式: {', '.join(ImageRenamer.SUPPORTED_FORMATS)}")
-        return
-    
-    print(f"\n找到 {len(image_files)} 个图像文件")
-    print(f"支持的格式: {', '.join(set(f.suffix.lower() for f in image_files))}")
-    
-    # 选择输出格式
-    print("\n输出文件格式:")
-    print("1. png (默认)")
-    print("2. jpg")
-    print("3. 保持原格式")
-    format_choice = input("请选择 (1-3，默认1): ").strip()
-    
-    if format_choice == "2":
-        output_format = "jpg"
-    elif format_choice == "3":
-        output_format = image_files[0].suffix.lower().replace('.', '')
-    else:
-        output_format = "png"
-    
-    renamer.output_format = output_format
-    
-    # 预览重命名
-    print("\n" + "="*80)
-    print("预览重命名操作")
-    print("="*80)
-    
-    rename_plan = renamer.preview_rename()
-    
-    # 显示前10个和后10个
-    print("\n前10个文件:")
-    for old_name, new_name in rename_plan[:10]:
-        print(f"  {old_name:40s} → {new_name}")
-    
-    if len(rename_plan) > 20:
-        print(f"\n  ... (省略 {len(rename_plan) - 20} 个文件) ...")
-        print(f"\n后10个文件:")
-        for old_name, new_name in rename_plan[-10:]:
-            print(f"  {old_name:40s} → {new_name}")
-    elif len(rename_plan) > 10:
-        print()
-        for old_name, new_name in rename_plan[10:]:
-            print(f"  {old_name:40s} → {new_name}")
-    
-    # 确认操作
-    print("\n" + "="*80)
-    print("⚠ 警告: 此操作将重命名所有图像文件！")
-    print("   建议先备份重要数据")
-    print("="*80)
-    
-    confirm = input("\n确认执行重命名? (yes/no): ").strip().lower()
-    
-    if confirm not in ['yes', 'y', '是']:
-        print("\n❌ 操作已取消")
-        return
-    
-    # 执行重命名
-    print("\n" + "="*80)
-    print("开始重命名...")
-    print("="*80)
-    
-    success_count = renamer.rename_images(
-        create_backup=True,
-        use_temp_rename=True
-    )
-    
-    # 完成
-    print("\n" + "="*80)
-    print("✓ 重命名完成！")
-    print("="*80)
-    print(f"成功重命名: {success_count}/{len(image_files)} 个文件")
-    print(f"输出格式: .{output_format}")
-    print(f"结果保存在: {target_dir}")
-    print(f"\n备份文件: {os.path.join(target_dir, 'rename_backup.json')}")
-    print("  (如需恢复原始文件名，请保留此文件)")
+    def batch_rename(self, create_backup: bool = True, 
+                    use_temp_rename: bool = True) -> Dict[str, int]:
+        """
+        批量重命名所有子文件夹的图像
+        
+        Parameters:
+        -----------
+        create_backup : bool
+            是否创建备份
+        use_temp_rename : bool
+            是否使用临时重命名
+            
+        Returns:
+        --------
+        Dict[str, int]
+            各文件夹的处理结果
+        """
+        image_folders = self.find_image_subfolders()
+        
+        if not image_folders:
+            print("⚠ 没有找到包含图像的文件夹")
+            return {}
+        
+        print(f"找到 {len(image_folders)} 个包含图像的文件夹:")
+        for folder in image_folders:
+            # 显示相对于根目录的路径
+            relative_path = folder.relative_to(self.root_dir) if folder != self.root_dir else Path(".")
+            print(f"  - {relative_path} ({folder})")
+        
+        results = {}
+        total_processed = 0
+        
+        print(f"\n开始批量处理...")
+        
+        for idx, folder in enumerate(image_folders):
+            relative_path = folder.relative_to(self.root_dir) if folder != self.root_dir else Path(".")
+            print(f"\n[{idx + 1}/{len(image_folders)}] 处理: {relative_path}")
+            print("="*60)
+            
+            success, count = self.process_folder(folder, create_backup, use_temp_rename)
+            results[str(folder)] = count
+            total_processed += count
+            
+            if success:
+                print(f"✓ 完成: 重命名 {count} 个文件")
+            else:
+                print(f"❌ 失败")
+        
+        print(f"\n" + "="*80)
+        print(f"✓ 批量处理完成！")
+        print(f"处理文件夹数: {len(image_folders)}")
+        print(f"总重命名文件数: {total_processed}")
+        print("="*80)
+        
+        return results
 
 
 def rename_images_simple(target_dir: str, output_format: str = "png", 
@@ -376,31 +430,80 @@ def rename_images_simple(target_dir: str, output_format: str = "png",
         return success_count
 
 
-if __name__ == "__main__":
-    import sys
-    
-    # 检查命令行参数
-    if len(sys.argv) > 1:
-        # 命令行模式
-        target_dir = sys.argv[1]
-        
-        # 检查是否为预览模式
-        preview = "--preview" in sys.argv or "-p" in sys.argv
-        
-        # 获取输出格式（跳过 --preview 和 -p 参数）
-        output_format = "png"
-        for arg in sys.argv[2:]:
-            if arg not in ["--preview", "-p"]:
-                output_format = arg
-                break
-        
-        try:
-            rename_images_simple(target_dir, output_format, preview)
-        except Exception as e:
-            print(f"❌ 错误: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        # 交互式模式
-        rename_images_interactive()
 
+
+if __name__ == "__main__":
+    # ==================== 配置参数区域 ====================
+    # 直接修改这些参数，然后运行脚本即可
+    
+    # 目标文件夹路径（支持包含子文件夹的大文件夹）
+    TARGET_DIRECTORY = r"F:\Projector_images\images_FSM"
+    
+    # 输出格式
+    OUTPUT_FORMAT = "png"  # 可选: png, jpg, 保持原格式
+    
+    # 是否处理子文件夹
+    PROCESS_SUBFOLDERS = True
+    
+    # 文件夹搜索深度（1=仅根目录，2=二级目录，3=三级目录）
+    MAX_SEARCH_DEPTH = 3
+    
+    # 是否仅预览（不实际重命名）
+    PREVIEW_ONLY = False
+    
+    # 是否创建备份
+    CREATE_BACKUP = False
+    
+    # 是否使用临时重命名（避免冲突）
+    USE_TEMP_RENAME = True
+    
+    # ==================== 配置参数区域结束 ====================
+    
+    print("="*80)
+    print("图像批量重命名工具")
+    print("="*80)
+    print(f"目标目录: {TARGET_DIRECTORY}")
+    print(f"输出格式: {OUTPUT_FORMAT}")
+    print(f"处理子文件夹: {PROCESS_SUBFOLDERS}")
+    print(f"搜索深度: {MAX_SEARCH_DEPTH}级")
+    print(f"预览模式: {PREVIEW_ONLY}")
+    print(f"创建备份: {CREATE_BACKUP}")
+    print(f"使用临时重命名: {USE_TEMP_RENAME}")
+    print("="*80)
+    
+    if not Path(TARGET_DIRECTORY).exists():
+        print(f"❌ 错误: 目标目录不存在: {TARGET_DIRECTORY}")
+        exit(1)
+    
+    try:
+        if PROCESS_SUBFOLDERS:
+            # 批量处理子文件夹
+            batch_renamer = BatchImageRenamer(TARGET_DIRECTORY, OUTPUT_FORMAT, MAX_SEARCH_DEPTH)
+            if PREVIEW_ONLY:
+                # 预览模式
+                folders = batch_renamer.find_image_subfolders()
+                print(f"\n将处理 {len(folders)} 个文件夹:")
+                for folder in folders:
+                    renamer = ImageRenamer(str(folder), OUTPUT_FORMAT)
+                    plan = renamer.preview_rename()
+                    print(f"\n{folder}:")
+                    for old, new in plan[:5]:  # 只显示前5个
+                        print(f"  {old} → {new}")
+                    if len(plan) > 5:
+                        print(f"  ... 还有 {len(plan) - 5} 个文件")
+            else:
+                batch_renamer.batch_rename(CREATE_BACKUP, USE_TEMP_RENAME)
+        else:
+            # 单文件夹处理
+            if PREVIEW_ONLY:
+                rename_images_simple(TARGET_DIRECTORY, OUTPUT_FORMAT, True)
+            else:
+                rename_images_simple(TARGET_DIRECTORY, OUTPUT_FORMAT, False)
+                
+        print("\n✓ 处理完成！")
+                
+    except Exception as e:
+        print(f"❌ 错误: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
