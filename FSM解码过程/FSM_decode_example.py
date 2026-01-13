@@ -915,9 +915,9 @@ def main():
     
     # -------------------- 4. 图像路径配置 --------------------
     # 请根据实际情况修改以下路径
-    IMAGE_DIR_HOR = r"F:\Projector_images\images_FSM\03_bookshelf_white_cycle1\FSM_horizontal_f0_f150"  # 水平条纹图像文件夹
-    IMAGE_DIR_VER = r"F:\Projector_images\images_FSM\03_bookshelf_white_cycle1\FSM_vertical_f0_f150"    # 垂直条纹图像文件夹
-    OUTPUT_DIR = r"d:\在校学习\FSM\results\fsa_decode"  # 输出结果文件夹
+    IMAGE_DIR_HOR = r"E:\images\2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_horizontal_f0_f150"  # 水平条纹图像文件夹
+    IMAGE_DIR_VER = r"E:\images\2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_vertical_f0_f150"    # 垂直条纹图像文件夹
+    OUTPUT_DIR = r"results2\fsa_decode"  # 输出结果文件夹
     # 提示：如果路径包含中文，确保使用 r"..." 原始字符串
     
     # -------------------- 5. 处理参数 --------------------

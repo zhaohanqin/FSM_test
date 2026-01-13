@@ -230,15 +230,15 @@ if __name__ == "__main__":
 	# ========================================================================
 
 	# 文件路径配置
-	npy_data_dir = r"E:\code\Structured_light_for_3DScanning\FSM\results\fsa_decode"  # .npy文件目录
-	calib_file = r"E:\code\Structured_light_for_3DScanning\FSM\标定结果.txt"  # 标定结果文件
-	output_dir = r"E:\code\Structured_light_for_3DScanning\FSM\results\reconstruction"  # 输出目录
+	npy_data_dir = r"results2\fsa_decode"  # .npy文件目录
+	calib_file = r"标定结果.txt"  # 标定结果文件
+	output_dir = r"results2\reconstruction"  # 输出目录2
 
 	# 创建输出目录
 	os.makedirs(output_dir, exist_ok=True)
 
 	# 参数配置
-	oversample = 17  # 过采样倍数（与解码时的过采样倍数必须一致）
+	oversample = 1  # 过采样倍数（与解码时的过采样倍数必须一致）
 	peak_limit = 10.0  # 峰值阈值（注意：峰值范围是0-200，不是0-1），用于过滤低质量的点
 
 	print("=" * 70)
@@ -252,8 +252,8 @@ if __name__ == "__main__":
 	print("\n[0/5] 数据源选择...")
 	
 	# 检查是否存在点集文件
-	cam_pixels_file = r"E:\code\Structured_light_for_3DScanning\FSM\cam_pixels_finally.npy"
-	proj_pixels_file = r"E:\code\Structured_light_for_3DScanning\FSM\proj_pixels_finally.npy"
+	cam_pixels_file = r"cam_pixels_finally.npy"
+	proj_pixels_file = r"proj_pixels_finally.npy"
 	
 	files_exist = os.path.exists(cam_pixels_file) and os.path.exists(proj_pixels_file)
 	
