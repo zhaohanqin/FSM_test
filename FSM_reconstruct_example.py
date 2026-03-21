@@ -39,16 +39,28 @@ if __name__ == "__main__":
     PROJECTOR_WIDTH = 1920             # 投影仪宽度（像素）
     PROJECTOR_HEIGHT = 1080          # 投影仪高度（像素）
     
-    # -------------------- 4. 数据路径配置 --------------------
+    # -------------------- 4. FSA解码参数（需与解码时一致）--------------------
+    # ★ 以下两个参数必须与 FSM_decode_example.py 中的设置保持一致
+    FREQUENCY_STEP = 1.0               # 频率步长（Hz），与解码时一致
+                                       # ★ 当FREQUENCY_STEP=1.0时，解码器的FFT长度=投影仪分辨率，
+                                       #   峰值归一化基数较大，重建器会自动补偿
+    NUM_FREQUENCIES = 150              # 采集的频率数量（M值），与解码时一致
+                                       # ★ 当FREQUENCY_STEP=1.0时必须提供此参数，
+                                       #   用于计算峰值归一化补偿因子
+    
+    # -------------------- 5. 数据路径配置 --------------------
     RESULT_DIR = "results/fsa_decode"  # 存放解码结果的文件夹
     
-    # -------------------- 5. 重建参数 --------------------
+    # -------------------- 6. 重建参数 --------------------
     OVERSAMPLE = 4                     # 过采样倍数（与解码时一致）
     PEAK_LIMIT = 0.8                   # 峰值阈值（范围：0-1）
                                        # 说明：越大过滤越严格，建议值：
                                        #   - 0.5: 包含中等质量以上的点
                                        #   - 0.8: 只保留高质量的点（推荐）
                                        #   - 1.0: 只保留最高质量的点
+                                       # ★ 当提供了FREQUENCY_STEP和NUM_FREQUENCIES时，
+                                       #   峰值会自动补偿到与M归一化等效的范围，
+                                       #   因此此阈值的含义与旧版一致，无需手动调整。
     
     # -------------------- 6. 白光图像路径（可选，用于点云颜色）--------------------
     # 用途：提供一张白光照明下拍摄的图像，用于给点云赋予真实颜色
@@ -191,7 +203,9 @@ if __name__ == "__main__":
             calibration_file=CALIBRATION_FILE,
             camera_image_size=CAMERA_IMAGE_SIZE,
             projector_width=PROJECTOR_WIDTH,
-            projector_height=PROJECTOR_HEIGHT
+            projector_height=PROJECTOR_HEIGHT,
+            frequency_step=FREQUENCY_STEP,
+            num_frequencies=NUM_FREQUENCIES
         )
     except Exception as e:
         print(f"❌ 错误: 创建重建器失败: {e}")

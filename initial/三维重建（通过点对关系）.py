@@ -230,9 +230,9 @@ if __name__ == "__main__":
 	# ========================================================================
 
 	# 文件路径配置
-	npy_data_dir = r"results2\fsa_decode"  # .npy文件目录
+	npy_data_dir = r"results\fsa_decode"  # .npy文件目录
 	calib_file = r"标定结果.txt"  # 标定结果文件
-	output_dir = r"results2\reconstruction"  # 输出目录2
+	output_dir = r"results\reconstruction"  # 输出目录2
 
 	# 创建输出目录
 	os.makedirs(output_dir, exist_ok=True)

@@ -164,8 +164,8 @@ if __name__ == "__main__":
     
     # 周期参数（新的定义方式）
     cycles_min = 0        # 最小周期数（DC分量，0个周期）
-    cycles_max = 49       # 最大周期数（图像中最多有多少个完整周期）
-    cycles_step = 0.5       # 周期增量（每次增加多少个周期）
+    cycles_max = 150       # 最大周期数（图像中最多有多少个完整周期）
+    cycles_step = 1.0       # 周期增量（每次增加多少个周期）
     
     # 💡 周期数说明：
     # - cycles = 0: DC分量（均匀灰度）
@@ -199,8 +199,8 @@ if __name__ == "__main__":
     # 输出控制 - 您可以选择生成哪些文件
     # ========================================
     save_1d_data = True          # 是否保存一维数据（总是生成N个相位）
-    save_full_image = True       # 是否保存完整图像（可直接投影）
-    save_full_4phase = True      # 完整图像是否生成N个相位（False则只生成0°）
+    save_full_image = False       # 是否保存完整图像（可直接投影）
+    save_full_4phase = False     # 完整图像是否生成N个相位（False则只生成0°）
     
     # 💡 使用建议：
     # - 只需要投影（单相位）：save_1d_data=False, save_full_image=True, save_full_4phase=False
@@ -211,8 +211,8 @@ if __name__ == "__main__":
     # 输出目录
     # 如果是both模式，目录名不包含方向；否则包含方向
     dir_suffix = direction if direction != 'both' else 'both'
-    output_dir_1d_base = rf"E:/fringe_patterns_full_sine_{dir_suffix}/1d_data"
-    output_dir_full_base = rf"E:/fringe_patterns_full_sine_{dir_suffix}/full_images"
+    output_dir_1d_base = rf"H:/fringe_patterns_full_sine_{dir_suffix}/1d_data"
+    output_dir_full_base = rf"H:/fringe_patterns_full_sine_{dir_suffix}/full_images"
     
     # ========================================
     # 生成条纹

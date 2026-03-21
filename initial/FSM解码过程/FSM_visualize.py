@@ -438,7 +438,7 @@ def main():
     # ========================================================================
     
     # -------------------- 1. 路径配置 --------------------
-    BASE_DIR = r"D:\在校学习\FSM"                                    # 基础目录
+    BASE_DIR = r"E:\code\FSM"                                    # 基础目录
     RESULT_DIR = os.path.join(BASE_DIR, "results", "fsa_decode")   # 解码结果目录
     OUTPUT_DIR = os.path.join(BASE_DIR, "results", "visualizations") # 可视化输出目录
     
