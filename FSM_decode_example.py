@@ -595,6 +595,10 @@ def run_epipolar_correction(images_cache, output_dir, projector_width, projector
 def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     """
     可视化频谱数据，展示FSA解码的完整过程
+    
+    输出：
+    - 1张总图（2×4 = 8子图合并），保存到 save_path
+    - 8张独立子图，保存到 save_path 同级目录下的 subplots/ 文件夹
     """
     try:
         import matplotlib.pyplot as plt
@@ -629,128 +633,154 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     N = spectrum_data['N']
     M = spectrum_data['num_frequencies']
     frequency_step = spectrum_data.get('frequency_step', 1.0)
+    spectrum = spectrum_data['spectrum']
+    frequencies = spectrum_data['frequencies']
+    peak_idx = spectrum_data['peak_index']
+    dir_label = '行' if direction == 'hor' else '列'
     
     print(f"分析点: ({point[0]}, {point[1]})")
     print(f"解码方向: {'水平 (投影仪行坐标)' if direction == 'hor' else '垂直 (投影仪列坐标)'}")
     print(f"频率数量: {M}")
     print(f"频率步长: {frequency_step} Hz")
     print(f"FFT长度(N): {N}")
-    print(f"最大峰值位置: {spectrum_data['peak_index']}")
+    print(f"最大峰值位置: {peak_idx}")
     print(f"最大峰值强度: {spectrum_data['peak_value']:.4f}")
     
-    fig = plt.figure(figsize=(20, 10))
-    
+    # 预计算共享数据
     freq_axis = np.arange(M) * frequency_step
-    
-    # 1. 原始强度序列
-    ax1 = plt.subplot(2, 4, 1)
-    ax1.plot(freq_axis, spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=1.5, markersize=3)
-    ax1.plot(freq_axis, spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=1.5, markersize=3)
-    ax1.plot(freq_axis, spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=1.5, markersize=3)
-    ax1.plot(freq_axis, spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=1.5, markersize=3)
-    ax1.set_xlabel('频率 (Hz)')
-    ax1.set_ylabel('强度值')
-    ax1.set_title(f'1. 原始强度序列\n(M={M}个频率，步长={frequency_step}Hz)')
-    ax1.legend(loc='best')
-    ax1.grid(True, alpha=0.3)
-    
-    # 2. 差分信号
-    ax2 = plt.subplot(2, 4, 2)
-    ax2.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=1.5, markersize=3)
-    ax2.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=1.5, markersize=3)
-    ax2.set_xlabel('频率 (Hz)')
-    ax2.set_ylabel('差分值')
-    ax2.set_title('2. 差分信号\n(消除直流分量和反射率)')
-    ax2.legend(loc='best')
-    ax2.grid(True, alpha=0.3)
-    
-    # 3. 复数信号的幅值
-    ax3 = plt.subplot(2, 4, 3)
     D_magnitude = np.abs(spectrum_data['Dc'] + 1j * spectrum_data['Ds'])
-    ax3.plot(freq_axis, D_magnitude, 'o-', color='purple', linewidth=1.5, markersize=3)
-    ax3.set_xlabel('频率 (Hz)')
-    ax3.set_ylabel('|D| (复数信号幅值)')
-    ax3.set_title('3. 复数信号幅值\nD = Dc + j·Ds')
-    ax3.grid(True, alpha=0.3)
-    
-    # 4. 完整频谱（线性坐标）
-    ax4 = plt.subplot(2, 4, 4)
-    spectrum = spectrum_data['spectrum']
-    frequencies = spectrum_data['frequencies']
-    ax4.plot(frequencies, spectrum, '-', linewidth=1, color='blue', alpha=0.7)
-    ax4.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
-                linewidth=2, label=f"峰值位置={spectrum_data['peak_index']}")
-    ax4.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
-    ax4.set_ylabel('归一化幅值')
-    ax4.set_title(f'4. 完整DFT频谱（线性坐标）\nFFT长度={N}, 峰值={spectrum_data["peak_value"]:.4f}')
-    ax4.legend(loc='best')
-    ax4.grid(True, alpha=0.3)
-    
-    # 5. 完整频谱（对数坐标）
-    ax5 = plt.subplot(2, 4, 5)
     spectrum_log = np.log10(spectrum + 1e-10)
-    ax5.plot(frequencies, spectrum_log, '-', linewidth=1, color='green', alpha=0.7)
-    ax5.axvline(x=spectrum_data['peak_index'], color='red', linestyle='--', 
-                linewidth=2, label=f"峰值位置={spectrum_data['peak_index']}")
-    ax5.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
-    ax5.set_ylabel('log₁₀(幅值)')
-    ax5.set_title('5. 完整DFT频谱（对数坐标）')
-    ax5.legend(loc='best')
-    ax5.grid(True, alpha=0.3)
-    
-    # 6. 局部放大（峰值附近）
-    ax6 = plt.subplot(2, 4, 6)
-    peak_idx = spectrum_data['peak_index']
     half_width = 100
-    start = max(0, peak_idx - half_width)
-    end = min(N, peak_idx + half_width)
-    ax6.plot(frequencies[start:end], spectrum[start:end], 'o-', 
-             linewidth=2, markersize=4, color='purple')
-    ax6.axvline(x=peak_idx, color='red', linestyle='--', linewidth=2, 
-                label=f'峰值位置={peak_idx}')
-    ax6.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
-    ax6.set_ylabel('归一化幅值')
-    ax6.set_title(f'6. 峰值附近局部放大\n范围: [{start}, {end}]')
-    ax6.legend(loc='best')
-    ax6.grid(True, alpha=0.3)
-    
-    # 7. 前20个峰值分析
-    ax7 = plt.subplot(2, 4, 7)
+    zoom_start = max(0, peak_idx - half_width)
+    zoom_end = min(N, peak_idx + half_width)
     top20_indices = np.argsort(spectrum)[-20:][::-1]
     top20_values = spectrum[top20_indices]
-    
-    ax7.plot(top20_indices, top20_values, 'o-', linewidth=2, markersize=6, color='blue', alpha=0.7)
-    ax7.plot(top20_indices[0], top20_values[0], 'o', markersize=10, color='red', 
-             label=f'最大峰值 (位置={top20_indices[0]}, 强度={top20_values[0]:.2f})')
-    
-    for ii in range(min(10, len(top20_indices))):
-        y_offset = 0.15 if ii % 2 == 0 else -0.25
-        ax7.text(top20_indices[ii], top20_values[ii] + y_offset, f'{top20_values[ii]:.2f}', 
-                fontsize=8, ha='center', va='center', 
-                color='red' if ii == 0 else 'darkblue', fontweight='bold')
-    
-    ax7.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
-    ax7.set_ylabel('归一化幅值')
-    ax7.set_title('7. 前20个峰值分析（按强度排序）')
-    ax7.legend(loc='best')
-    ax7.grid(True, alpha=0.3)
-    
-    # 8. 峰值强度随坐标变化
-    ax8 = plt.subplot(2, 4, 8)
     sorted_order = np.argsort(top20_indices)
     sorted_indices = top20_indices[sorted_order]
     sorted_values = top20_values[sorted_order]
     max_peak_pos = np.where(sorted_indices == top20_indices[0])[0][0]
     
-    ax8.plot(sorted_indices, sorted_values, 'o-', linewidth=2, markersize=6, color='blue', alpha=0.7)
-    ax8.plot(sorted_indices[max_peak_pos], sorted_values[max_peak_pos], 'o', markersize=10, color='red', 
-             label=f'最大峰值 (位置={sorted_indices[max_peak_pos]})', zorder=5)
+    # ====================================================================
+    # 定义8个子图的绘制函数，每个接受一个 ax 参数
+    # ====================================================================
     
-    ax8.set_xlabel(f"投影仪{'行' if direction == 'hor' else '列'}坐标")
-    ax8.set_ylabel('归一化幅值')
-    ax8.set_title('8. 峰值强度随坐标变化（按坐标排序）')
-    ax8.legend(loc='best')
-    ax8.grid(True, alpha=0.3)
+    def draw_subplot_1(ax):
+        """1. 原始强度序列"""
+        ax.plot(freq_axis, spectrum_data['I0'], 'o-', label='I0 (0°)', linewidth=1.5, markersize=3)
+        ax.plot(freq_axis, spectrum_data['I1'], 's-', label='I1 (90°)', linewidth=1.5, markersize=3)
+        ax.plot(freq_axis, spectrum_data['I2'], '^-', label='I2 (180°)', linewidth=1.5, markersize=3)
+        ax.plot(freq_axis, spectrum_data['I3'], 'd-', label='I3 (270°)', linewidth=1.5, markersize=3)
+        ax.set_xlabel('频率 (Hz)')
+        ax.set_ylabel('强度值')
+        ax.set_title(f'1. 原始强度序列\n(M={M}个频率，步长={frequency_step}Hz)')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_2(ax):
+        """2. 差分信号"""
+        ax.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc = I0 - I2', linewidth=1.5, markersize=3)
+        ax.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds = I3 - I1', linewidth=1.5, markersize=3)
+        ax.set_xlabel('频率 (Hz)')
+        ax.set_ylabel('差分值')
+        ax.set_title('2. 差分信号\n(消除直流分量和反射率)')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_3(ax):
+        """3. 复数信号幅值"""
+        ax.plot(freq_axis, D_magnitude, 'o-', color='purple', linewidth=1.5, markersize=3)
+        ax.set_xlabel('频率 (Hz)')
+        ax.set_ylabel('|D| (复数信号幅值)')
+        ax.set_title('3. 复数信号幅值\nD = Dc + j·Ds')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_4(ax):
+        """4. 完整DFT频谱（线性坐标）"""
+        ax.plot(frequencies, spectrum, '-', linewidth=1, color='blue', alpha=0.7)
+        ax.axvline(x=peak_idx, color='red', linestyle='--', 
+                    linewidth=2, label=f"峰值位置={peak_idx}")
+        ax.set_xlabel(f"投影仪{dir_label}坐标")
+        ax.set_ylabel('归一化幅值')
+        ax.set_title(f'4. 完整DFT频谱（线性坐标）\nFFT长度={N}, 峰值={spectrum_data["peak_value"]:.4f}')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_5(ax):
+        """5. 完整DFT频谱（对数坐标）"""
+        ax.plot(frequencies, spectrum_log, '-', linewidth=1, color='green', alpha=0.7)
+        ax.axvline(x=peak_idx, color='red', linestyle='--', 
+                    linewidth=2, label=f"峰值位置={peak_idx}")
+        ax.set_xlabel(f"投影仪{dir_label}坐标")
+        ax.set_ylabel('log₁₀(幅值)')
+        ax.set_title('5. 完整DFT频谱（对数坐标）')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_6(ax):
+        """6. 峰值附近局部放大"""
+        ax.plot(frequencies[zoom_start:zoom_end], spectrum[zoom_start:zoom_end], 'o-', 
+                 linewidth=2, markersize=4, color='purple')
+        ax.axvline(x=peak_idx, color='red', linestyle='--', linewidth=2, 
+                    label=f'峰值位置={peak_idx}')
+        ax.set_xlabel(f"投影仪{dir_label}坐标")
+        ax.set_ylabel('归一化幅值')
+        ax.set_title(f'6. 峰值附近局部放大\n范围: [{zoom_start}, {zoom_end}]')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_7(ax):
+        """7. 前20个峰值分析（按强度排序）"""
+        ax.plot(top20_indices, top20_values, 'o-', linewidth=2, markersize=6, color='blue', alpha=0.7)
+        ax.plot(top20_indices[0], top20_values[0], 'o', markersize=10, color='red', 
+                 label=f'最大峰值 (位置={top20_indices[0]}, 强度={top20_values[0]:.2f})')
+        for ii in range(min(10, len(top20_indices))):
+            y_offset = 0.15 if ii % 2 == 0 else -0.25
+            ax.text(top20_indices[ii], top20_values[ii] + y_offset, f'{top20_values[ii]:.2f}', 
+                    fontsize=8, ha='center', va='center', 
+                    color='red' if ii == 0 else 'darkblue', fontweight='bold')
+        ax.set_xlabel(f"投影仪{dir_label}坐标")
+        ax.set_ylabel('归一化幅值')
+        ax.set_title('7. 前20个峰值分析（按强度排序）')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    def draw_subplot_8(ax):
+        """8. 峰值强度随坐标变化（按坐标排序）"""
+        ax.plot(sorted_indices, sorted_values, 'o-', linewidth=2, markersize=6, color='blue', alpha=0.7)
+        ax.plot(sorted_indices[max_peak_pos], sorted_values[max_peak_pos], 'o', markersize=10, color='red', 
+                 label=f'最大峰值 (位置={sorted_indices[max_peak_pos]})', zorder=5)
+        ax.set_xlabel(f"投影仪{dir_label}坐标")
+        ax.set_ylabel('归一化幅值')
+        ax.set_title('8. 峰值强度随坐标变化（按坐标排序）')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    # 所有子图绘制函数列表（顺序对应子图编号 1~8）
+    subplot_drawers = [
+        draw_subplot_1, draw_subplot_2, draw_subplot_3, draw_subplot_4,
+        draw_subplot_5, draw_subplot_6, draw_subplot_7, draw_subplot_8
+    ]
+    
+    # 子图短名称（用于文件命名）
+    subplot_names = [
+        "1_raw_intensity",
+        "2_diff_signal",
+        "3_complex_magnitude",
+        "4_spectrum_linear",
+        "5_spectrum_log",
+        "6_peak_zoom",
+        "7_top20_peaks",
+        "8_peaks_by_coord"
+    ]
+    
+    # ====================================================================
+    # 绘制总图（2×4 = 8子图合并）
+    # ====================================================================
+    fig = plt.figure(figsize=(20, 10))
+    
+    for i, drawer in enumerate(subplot_drawers):
+        ax = plt.subplot(2, 4, i + 1)
+        drawer(ax)
     
     plt.suptitle(f'FSA频谱分析 - 像素({point[0]}, {point[1]}) - {direction.upper()}方向\n'
                  f'FFT长度={N}, 峰值位置: {peak_idx}, 峰值强度: {spectrum_data["peak_value"]:.4f}', 
@@ -761,12 +791,39 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
         os.makedirs(pixel_save_dir, exist_ok=True)
         plt.tight_layout(pad=2.0)
         plt.savefig(save_path, dpi=150, bbox_inches=None, facecolor='white', edgecolor='none')
-        print(f"\n✓ 频谱图像已保存到: {save_path}")
+        print(f"\n✓ 总图已保存到: {save_path}")
     
     try:
         plt.show()
     except Exception as e:
         print(f"⚠ 警告：无法显示图形窗口: {str(e)[:50]}")
+    
+    plt.close(fig)
+    
+    # ====================================================================
+    # 逐个保存8张独立子图
+    # ====================================================================
+    if save_path:
+        subplots_dir = os.path.join(os.path.dirname(save_path), "subplots")
+        os.makedirs(subplots_dir, exist_ok=True)
+        
+        # 从总图文件名中提取基础名，例如 "spectrum_1200_1000_hor_analysis"
+        base_name = os.path.splitext(os.path.basename(save_path))[0]
+        
+        sub_title_prefix = f'像素({point[0]}, {point[1]}) - {direction.upper()}方向'
+        
+        for i, (drawer, name) in enumerate(zip(subplot_drawers, subplot_names)):
+            fig_sub = plt.figure(figsize=(8, 6))
+            ax_sub = fig_sub.add_subplot(1, 1, 1)
+            drawer(ax_sub)
+            fig_sub.suptitle(sub_title_prefix, fontsize=12, fontweight='bold')
+            fig_sub.tight_layout(rect=[0, 0, 1, 0.94])
+            
+            sub_save_path = os.path.join(subplots_dir, f"{base_name}_{name}.png")
+            fig_sub.savefig(sub_save_path, dpi=150, facecolor='white', edgecolor='none')
+            plt.close(fig_sub)
+        
+        print(f"✓ 8张独立子图已保存到: {subplots_dir}")
     
     print("="*80)
     return True
@@ -914,7 +971,7 @@ def main():
     # 这些多峰像素可能存在误匹配，扫描结果会以可复制的格式输出，
     # 方便直接填入 PIXELS_TO_CORRECT 进行极线约束校正。
     # ★ 注意：扫描过程需要对全图做FFT，耗时约等于一次完整解码。
-    ENABLE_MULTI_PEAK_SCAN = True
+    ENABLE_MULTI_PEAK_SCAN = False
     
     # 多峰扫描的次峰判定阈值
     # 对每个像素的频谱，先找到主峰，再抑制主峰旁瓣后寻找次峰。
