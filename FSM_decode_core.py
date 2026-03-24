@@ -17,19 +17,22 @@ FSA (Frequency Shift Analysis) 频移法解码核心模块（重构版）
 1. **ImageLoader** - 图像加载器（新增）
    负责加载条纹图像序列，支持缓存和中文路径
 
-2. **DFTProcessor** - DFT处理器（新增）
+2. **CalibrationReader** - 标定文件读取器（新增，移植自FSM_reconstruct_core.py）
+   负责读取标定结果文件，提取极线约束校正所需的参数
+
+3. **DFTProcessor** - DFT处理器（新增）
    负责执行DFT傅里叶变换，将时域信号转换到频域
 
-3. **PeakDetector** - 峰值检测器（新增）
+4. **PeakDetector** - 峰值检测器（新增）
    负责在频谱中找到最高响应峰值，并计算子像素精度
 
-4. **MultiPeakDetector** - 多峰检测器（新增，恢复自decode_fsa.py）
+5. **MultiPeakDetector** - 多峰检测器（新增，恢复自decode_fsa.py）
    在频谱中找出所有局部极大值，支持近峰加权合并，用于后续极线约束校正
 
-5. **EpipolarCorrector** - 极线约束校正器（新增，恢复自decode_fsa.py）
+6. **EpipolarCorrector** - 极线约束校正器（新增，恢复自decode_fsa.py）
    利用相机-投影仪极线几何约束，从多个候选峰值中选出正确匹配
 
-6. **FSADecoder** - FSA解码协调器（重构）
+7. **FSADecoder** - FSA解码协调器（重构）
    整合上述组件，提供统一的解码接口，保持向后兼容性
 
 修复说明：
@@ -45,7 +48,7 @@ FSA (Frequency Shift Analysis) 频移法解码核心模块（重构版）
 
 import numpy as np
 import os
-from typing import Tuple, Optional, List, Union
+from typing import Tuple, Optional, List, Union, Dict
 
 
 class ImageLoader:
@@ -194,6 +197,201 @@ class ImageLoader:
         print("\n[OK] 图像序列验证通过！")
         print("="*60)
         return True
+
+
+class CalibrationReader:
+    """
+    标定结果读取器
+    
+    移植自 FSM_reconstruct_core.py，用于从标定结果文件中读取
+    相机和投影仪的标定参数。
+    
+    在解码模块中主要用于极线约束校正（EpipolarCorrector），
+    使用户无需手动填写标定参数，只需指定标定文件路径即可。
+    """
+    
+    @staticmethod
+    def read_calibration_file(calib_file_path: str) -> Dict:
+        """
+        读取标定结果文件
+        
+        Parameters:
+        -----------
+        calib_file_path : str
+            标定结果文件路径（.txt格式）
+            
+        Returns:
+        --------
+        calib_data : dict
+            包含相机和投影仪标定参数的字典，键包括：
+            - 'camera': dict，包含 fx, fy, cx, cy, k1, k2, p1, p2
+            - 'projector': dict，包含 fx, fy, cx, cy, k1, k2, p1, p2
+            - 'rotation_matrix': np.ndarray (3x3)，投影仪相对于相机的旋转矩阵
+            - 'translation': np.ndarray (3,)，投影仪相对于相机的平移向量
+            
+        文件格式说明：
+        -------------
+        标定结果.txt 文件的行号对应关系：
+        - 第5-12行（索引4-11）：相机参数 (fx, fy, cx, cy, k1, k2, p1, p2)
+        - 第18-25行（索引17-24）：投影仪参数 (fx, fy, cx, cy, k1, k2, p1, p2)
+        - 第28-30行（索引27-29）：旋转矩阵（3x3，每行3个数）
+        - 第33行（索引32）：平移向量（1x3）
+        """
+        print(f"\n读取标定文件: {calib_file_path}")
+        
+        with open(calib_file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        calib_data = {}
+        
+        # 解析相机参数
+        cam_params = []
+        for i in range(4, 12):  # 第5-12行是相机参数
+            cam_params.append(float(lines[i].strip()))
+        
+        calib_data['camera'] = {
+            'fx': cam_params[0],
+            'fy': cam_params[1],
+            'cx': cam_params[2],
+            'cy': cam_params[3],
+            'k1': cam_params[4],
+            'k2': cam_params[5],
+            'p1': cam_params[6],
+            'p2': cam_params[7]
+        }
+        
+        # 解析投影仪参数
+        proj_params = []
+        for i in range(17, 25):  # 第18-25行是投影仪参数
+            proj_params.append(float(lines[i].strip()))
+        
+        calib_data['projector'] = {
+            'fx': proj_params[0],
+            'fy': proj_params[1],
+            'cx': proj_params[2],
+            'cy': proj_params[3],
+            'k1': proj_params[4],
+            'k2': proj_params[5],
+            'p1': proj_params[6],
+            'p2': proj_params[7]
+        }
+        
+        # 解析旋转矩阵（3x3）
+        rotation_matrix = []
+        for i in range(27, 30):  # 第28-30行是旋转矩阵
+            row = [float(x) for x in lines[i].strip().split()]
+            rotation_matrix.append(row)
+        calib_data['rotation_matrix'] = np.array(rotation_matrix)
+        
+        # 解析平移矩阵（1x3）
+        translation = [float(x) for x in lines[32].strip().split()]
+        calib_data['translation'] = np.array(translation)
+        
+        print("[OK] 标定文件读取成功")
+        print(f"  相机参数: fx={calib_data['camera']['fx']:.2f}, fy={calib_data['camera']['fy']:.2f}")
+        print(f"  投影仪参数: fx={calib_data['projector']['fx']:.2f}, fy={calib_data['projector']['fy']:.2f}")
+        print(f"  平移向量: {calib_data['translation']}")
+        
+        return calib_data
+    
+    @staticmethod
+    def extract_epipolar_params(calib_data: Dict) -> Dict:
+        """
+        从标定数据中提取极线约束校正所需的参数
+        
+        将 read_calibration_file() 返回的标定数据字典转换为
+        EpipolarCorrector 所需的 8 个参数格式。
+        
+        转换逻辑：
+        ---------
+        EpipolarCorrector 使用"双目模型"，需要相机和投影仪各自的
+        内参、畸变、旋转向量（Rodrigues格式）和平移向量。
+        
+        在相机-投影仪系统中，通常将相机作为参考坐标系原点：
+        - 相机的旋转 = 单位旋转（Rodrigues向量 = [0, 0, 0]）
+        - 相机的平移 = 零向量 [0, 0, 0]
+        - 投影仪的旋转 = 标定文件中的旋转矩阵 → 转换为Rodrigues向量
+        - 投影仪的平移 = 标定文件中的平移向量
+        
+        Parameters:
+        -----------
+        calib_data : dict
+            read_calibration_file() 返回的标定数据字典
+            
+        Returns:
+        --------
+        params : dict
+            包含极线约束校正所需的 8 个参数，键为：
+            - 'cam_intrinsic': 相机内参矩阵 (3x3)
+            - 'cam_distortion': 相机畸变系数 (5,)
+            - 'cam_rotation': 相机旋转向量 (3,)，即 [0, 0, 0]
+            - 'cam_translation': 相机平移向量 (3,)，即 [0, 0, 0]
+            - 'proj_intrinsic': 投影仪内参矩阵 (3x3)
+            - 'proj_distortion': 投影仪畸变系数 (5,)
+            - 'proj_rotation': 投影仪旋转向量 (3,)，Rodrigues格式
+            - 'proj_translation': 投影仪平移向量 (3,)
+        """
+        import cv2
+        
+        # 构建相机内参矩阵
+        cam = calib_data['camera']
+        cam_intrinsic = np.array([
+            [cam['fx'], 0, cam['cx']],
+            [0, cam['fy'], cam['cy']],
+            [0, 0, 1]
+        ], dtype=np.float64)
+        
+        # 相机畸变系数（k1, k2, p1, p2, k3=0）
+        cam_distortion = np.array([
+            cam['k1'], cam['k2'], cam['p1'], cam['p2'], 0
+        ], dtype=np.float64)
+        
+        # 相机作为参考坐标系原点：旋转=单位旋转，平移=零
+        cam_rotation = np.zeros(3, dtype=np.float64)
+        cam_translation = np.zeros(3, dtype=np.float64)
+        
+        # 构建投影仪内参矩阵
+        proj = calib_data['projector']
+        proj_intrinsic = np.array([
+            [proj['fx'], 0, proj['cx']],
+            [0, proj['fy'], proj['cy']],
+            [0, 0, 1]
+        ], dtype=np.float64)
+        
+        # 投影仪畸变系数
+        proj_distortion = np.array([
+            proj['k1'], proj['k2'], proj['p1'], proj['p2'], 0
+        ], dtype=np.float64)
+        
+        # 将旋转矩阵转换为Rodrigues旋转向量
+        R = np.array(calib_data['rotation_matrix'], dtype=np.float64)
+        proj_rotation, _ = cv2.Rodrigues(R)
+        proj_rotation = proj_rotation.flatten()
+        
+        # 投影仪平移向量
+        proj_translation = np.array(calib_data['translation'], dtype=np.float64).flatten()
+        
+        params = {
+            'cam_intrinsic': cam_intrinsic,
+            'cam_distortion': cam_distortion,
+            'cam_rotation': cam_rotation,
+            'cam_translation': cam_translation,
+            'proj_intrinsic': proj_intrinsic,
+            'proj_distortion': proj_distortion,
+            'proj_rotation': proj_rotation,
+            'proj_translation': proj_translation,
+        }
+        
+        print("\n[OK] 已从标定数据中提取极线约束校正参数:")
+        print(f"  相机内参: fx={cam['fx']:.2f}, fy={cam['fy']:.2f}, cx={cam['cx']:.2f}, cy={cam['cy']:.2f}")
+        print(f"  相机畸变: k1={cam['k1']:.6f}, k2={cam['k2']:.6f}, p1={cam['p1']:.6f}, p2={cam['p2']:.6f}")
+        print(f"  相机位姿: 旋转=[0,0,0]（参考原点），平移=[0,0,0]")
+        print(f"  投影仪内参: fx={proj['fx']:.2f}, fy={proj['fy']:.2f}, cx={proj['cx']:.2f}, cy={proj['cy']:.2f}")
+        print(f"  投影仪畸变: k1={proj['k1']:.6f}, k2={proj['k2']:.6f}, p1={proj['p1']:.6f}, p2={proj['p2']:.6f}")
+        print(f"  投影仪旋转向量(Rodrigues): {proj_rotation}")
+        print(f"  投影仪平移向量: {proj_translation}")
+        
+        return params
 
 
 class DFTProcessor:
@@ -423,6 +621,246 @@ class MultiPeakDetector:
             results.append(peaks)
         
         return results
+    
+    @staticmethod
+    def scan_image_for_multi_peaks(images, direction, proj_height, proj_width,
+                                    num_frequencies, frequency_step=1.0,
+                                    peak_limit=0.5, suppress_radius=30,
+                                    block_size=100, max_report=200):
+        """
+        扫描整幅图像，找出所有存在多峰（多个显著频谱峰值）的像素
+        
+        原理：
+        ------
+        对每个像素的频谱执行以下检测：
+        1. 找到主峰（最大值）
+        2. 抑制主峰附近 ±suppress_radius 个频率bin（消除旁瓣影响）
+        3. 在剩余频谱中找次峰
+        4. 如果次峰的归一化幅值 > peak_limit，则判定该像素存在多峰
+        
+        多峰像素通常出现在反射区域、遮挡边界或多路径干扰区域，
+        这些像素在视差图中可能存在误匹配，需要极线约束校正。
+        
+        Parameters:
+        -----------
+        images : np.ndarray
+            原始图像数组，形状为 (M*4, height, width)
+        direction : str
+            条纹方向 'hor' 或 'ver'
+        proj_height, proj_width : int
+            投影仪分辨率
+        num_frequencies : int
+            频率数量 M
+        frequency_step : float
+            频率步长
+        peak_limit : float
+            次峰判定阈值，次峰归一化幅值超过此值则认为存在多峰
+        suppress_radius : int
+            主峰抑制半径（频率bin数），用于避免旁瓣被误判为独立峰值
+        block_size : int
+            分块处理大小（行数），控制内存使用
+        max_report : int
+            最多报告的多峰像素数量，避免输出过多
+            
+        Returns:
+        --------
+        multi_peak_pixels : list of dict
+            每个多峰像素的信息字典，包含：
+            - 'x', 'y': 像素坐标
+            - 'primary_pos': 主峰位置（投影仪坐标）
+            - 'primary_val': 主峰归一化幅值
+            - 'secondary_pos': 次峰位置（投影仪坐标）
+            - 'secondary_val': 次峰归一化幅值
+            - 'ratio': 次峰/主峰 比值
+        """
+        proj_dim = proj_height if direction == "hor" else proj_width
+        
+        if frequency_step == 1.0:
+            fft_length = proj_dim
+        else:
+            fft_length = num_frequencies
+        
+        height, width = images.shape[1], images.shape[2]
+        
+        print(f"\n{'='*60}")
+        print(f"多峰像素扫描 - {direction.upper()}方向")
+        print(f"{'='*60}")
+        print(f"  图像尺寸: {width} × {height}")
+        print(f"  FFT长度: {fft_length}")
+        print(f"  次峰判定阈值: {peak_limit}")
+        print(f"  主峰抑制半径: ±{suppress_radius} bins")
+        
+        # 构造复数信号
+        images_f = images.astype(np.float32) if images.dtype != np.float32 else images
+        I0 = images_f[0::4]
+        I1 = images_f[1::4]
+        I2 = images_f[2::4]
+        I3 = images_f[3::4]
+        D = (I0 - I2) + 1j * (I3 - I1)
+        del I0, I1, I2, I3, images_f
+        
+        multi_peak_pixels = []
+        freq_indices = np.arange(fft_length)[:, None]  # (N, 1) 用于向量化距离计算
+        
+        for row_start in range(0, height, block_size):
+            row_end = min(row_start + block_size, height)
+            D_block = D[:, row_start:row_end, :]  # (M, block_h, width)
+            
+            # FFT
+            C = np.fft.fft(D_block, n=fft_length, axis=0)
+            C_mag = np.abs(C) / fft_length  # (N, block_h, width)
+            
+            block_h = row_end - row_start
+            
+            # 对每一列（像素列）逐行处理，但在列方向向量化
+            for local_row in range(block_h):
+                C_row = C_mag[:, local_row, :]  # (N, width)
+                
+                # 主峰
+                primary_idx = np.argmax(C_row, axis=0)  # (width,)
+                col_indices = np.arange(width)
+                primary_val = C_row[primary_idx, col_indices]
+                
+                # 计算每个频率bin到主峰的圆周距离
+                # primary_idx shape: (width,) → broadcast to (N, width)
+                dist = np.abs(freq_indices - primary_idx[None, :])
+                dist = np.minimum(dist, fft_length - dist)  # 圆周距离
+                
+                # 抑制主峰邻域
+                suppress_mask = dist <= suppress_radius  # (N, width)
+                C_masked = C_row.copy()
+                C_masked[suppress_mask] = 0
+                
+                # 次峰
+                secondary_idx = np.argmax(C_masked, axis=0)
+                secondary_val = C_masked[secondary_idx, col_indices]
+                
+                # 筛选多峰像素
+                mask = secondary_val > peak_limit
+                multi_cols = np.where(mask)[0]
+                
+                abs_row = row_start + local_row
+                for col in multi_cols:
+                    if len(multi_peak_pixels) < max_report * 10:  # 收集更多用于排序
+                        multi_peak_pixels.append({
+                            'x': int(col),
+                            'y': abs_row,
+                            'primary_pos': int(primary_idx[col]),
+                            'primary_val': float(primary_val[col]),
+                            'secondary_pos': int(secondary_idx[col]),
+                            'secondary_val': float(secondary_val[col]),
+                            'ratio': float(secondary_val[col] / primary_val[col]) if primary_val[col] > 0 else 0.0,
+                        })
+            
+            progress = min(row_end, height)
+            print(f"\r  扫描进度: {progress}/{height} ({progress/height*100:.1f}%), "
+                  f"已发现 {len(multi_peak_pixels)} 个多峰像素", end="")
+        
+        print()
+        
+        # 按次峰强度降序排序，取top max_report
+        multi_peak_pixels.sort(key=lambda p: p['secondary_val'], reverse=True)
+        if len(multi_peak_pixels) > max_report:
+            total_found = len(multi_peak_pixels)
+            multi_peak_pixels = multi_peak_pixels[:max_report]
+            print(f"  共发现 {total_found} 个多峰像素，仅报告次峰最强的前 {max_report} 个")
+        
+        print(f"[OK] 多峰扫描完成，共 {len(multi_peak_pixels)} 个多峰像素")
+        
+        return multi_peak_pixels
+    
+    @staticmethod
+    def generate_spectrum_data_for_pixels(images, pixel_coords, direction,
+                                           proj_height, proj_width,
+                                           num_frequencies, frequency_step=1.0):
+        """
+        为指定像素生成完整的频谱分析数据（与 visualize_spectrum 兼容的格式）
+        
+        用于对极线约束校正的像素点进行与 SPECTRUM_POINTS 相同的频谱可视化分析。
+        
+        Parameters:
+        -----------
+        images : np.ndarray
+            原始图像数组，形状为 (M*4, height, width)
+        pixel_coords : list of (x, y) tuples
+            需要分析的像素坐标列表
+        direction : str
+            条纹方向 'hor' 或 'ver'
+        proj_height, proj_width : int
+            投影仪分辨率
+        num_frequencies : int
+            频率数量 M
+        frequency_step : float
+            频率步长
+            
+        Returns:
+        --------
+        spectrum_data_dict : dict
+            以像素索引为键、spectrum_data字典为值的字典，
+            每个spectrum_data字典与 visualize_spectrum() 函数的输入格式兼容
+        """
+        proj_dim = proj_height if direction == "hor" else proj_width
+        
+        if frequency_step == 1.0:
+            fft_length = proj_dim
+            coord_scale = 1.0
+        else:
+            fft_length = num_frequencies
+            coord_scale = proj_dim / num_frequencies
+        
+        images_f = images.astype(np.float32) if images.dtype != np.float32 else images
+        I0 = images_f[0::4]
+        I1 = images_f[1::4]
+        I2 = images_f[2::4]
+        I3 = images_f[3::4]
+        Dc = I0 - I2
+        Ds = I3 - I1
+        D = Dc + 1j * Ds
+        
+        spectrum_data_dict = {}
+        
+        for idx, (x, y) in enumerate(pixel_coords):
+            if not (0 <= x < images.shape[2] and 0 <= y < images.shape[1]):
+                print(f"  ⚠ 像素({x},{y}) 超出图像范围，跳过")
+                continue
+            
+            # 提取该像素的时域信号
+            pixel_I0 = I0[:, y, x].copy()
+            pixel_I1 = I1[:, y, x].copy()
+            pixel_I2 = I2[:, y, x].copy()
+            pixel_I3 = I3[:, y, x].copy()
+            pixel_Dc = Dc[:, y, x].copy()
+            pixel_Ds = Ds[:, y, x].copy()
+            
+            # FFT
+            signal = D[:, y, x]
+            C = np.fft.fft(signal, n=fft_length)
+            C_magnitude = np.abs(C)
+            
+            peak_idx = int(np.argmax(C_magnitude))
+            peak_value = float(C_magnitude[peak_idx] / fft_length)
+            
+            spectrum_data_dict[idx] = {
+                'spectrum': C_magnitude / fft_length,
+                'spectrum_raw': C_magnitude.copy(),
+                'spectrum_complex': C.copy(),
+                'frequencies': np.arange(fft_length),
+                'peak_index': peak_idx,
+                'peak_value': peak_value,
+                'point': (x, y),
+                'direction': direction,
+                'N': fft_length,
+                'num_frequencies': num_frequencies,
+                'frequency_step': frequency_step,
+                'I0': pixel_I0,
+                'I1': pixel_I1,
+                'I2': pixel_I2,
+                'I3': pixel_I3,
+                'Dc': pixel_Dc,
+                'Ds': pixel_Ds,
+            }
+        
+        return spectrum_data_dict
 
 
 class EpipolarCorrector:

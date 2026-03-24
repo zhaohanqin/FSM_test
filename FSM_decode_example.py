@@ -14,6 +14,15 @@ FSA解码使用示例
 -----------------------------------------
 4. 多峰检测（MultiPeakDetector）：找出频谱中所有候选峰值
 5. 极线约束校正（EpipolarCorrector）：利用极线几何修正误匹配
+6. 标定文件自动读取（CalibrationReader）：从标定结果.txt自动提取极线约束参数
+
+新增辅助功能：
+--------------
+7. 多峰像素扫描（ENABLE_MULTI_PEAK_SCAN）：解码后自动扫描全图，
+   找出频谱中存在多个显著峰值的像素，输出可复制的坐标列表，
+   方便填入 PIXELS_TO_CORRECT 进行极线约束校正
+8. 校正像素频谱可视化（ENABLE_EPIPOLAR_SPECTRUM_VIZ）：对进行极线约束校正
+   的像素点，自动生成与 SPECTRUM_POINTS 相同格式的8子图频谱分析图
 
 图像序列的组织方式：
 -------------------
@@ -24,7 +33,7 @@ FSA解码使用示例
 
 import numpy as np
 import os
-from FSM_decode_core import FSADecoder, MultiPeakDetector, EpipolarCorrector
+from FSM_decode_core import FSADecoder, MultiPeakDetector, EpipolarCorrector, CalibrationReader
 
 
 def save_spectrum_data(spectrum_data, output_dir, direction, spectrum_points):
@@ -58,7 +67,8 @@ def save_spectrum_data(spectrum_data, output_dir, direction, spectrum_points):
 
 def decode_fsa_images(projector_width, projector_height, num_frequencies, decode_direction,
                       image_dir_hor, image_dir_ver, output_dir, block_size, use_cache,
-                      verify_sequence, low_memory_mode, spectrum_points, frequency_step=1.0):
+                      verify_sequence, low_memory_mode, spectrum_points, frequency_step=1.0,
+                      multi_peak_scan=False, multi_peak_scan_limit=0.5):
     """
     使用FSADecoder解码实际采集的图像
     
@@ -90,6 +100,10 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
         频谱分析点坐标
     frequency_step : float
         频率步长（Hz），默认为1.0
+    multi_peak_scan : bool
+        是否在解码后扫描多峰像素，默认False
+    multi_peak_scan_limit : float
+        多峰扫描的次峰判定阈值，默认0.5
         
     Returns:
     --------
@@ -114,6 +128,8 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     LOW_MEMORY_MODE = low_memory_mode
     SPECTRUM_POINTS = spectrum_points
     FREQUENCY_STEP = frequency_step
+    MULTI_PEAK_SCAN = multi_peak_scan
+    MULTI_PEAK_SCAN_LIMIT = multi_peak_scan_limit
     
     if DECODE_DIRECTION not in ["both", "ver", "hor"]:
         print(f"[ERROR] 错误: DECODE_DIRECTION 参数无效: '{DECODE_DIRECTION}'")
@@ -256,6 +272,69 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     elif DECODE_DIRECTION == "hor":
         print("\n⊙ 根据配置，跳过垂直方向解码（仅解码水平方向）")
     
+    # ==================== 多峰像素扫描（可选） ====================
+    multi_peak_results = {}
+    if MULTI_PEAK_SCAN and images_cache:
+        print("\n" + "="*80)
+        print("多峰像素扫描")
+        print("="*80)
+        print("扫描频谱中存在多个显著峰值的像素，这些像素可能存在误匹配。")
+        print(f"次峰判定阈值: {MULTI_PEAK_SCAN_LIMIT}")
+        print("扫描完成后会输出可直接用于 PIXELS_TO_CORRECT 的坐标列表。\n")
+        
+        for dir_key in ['hor', 'ver']:
+            if dir_key in images_cache:
+                mp_pixels = MultiPeakDetector.scan_image_for_multi_peaks(
+                    images=images_cache[dir_key],
+                    direction=dir_key,
+                    proj_height=PROJECTOR_HEIGHT,
+                    proj_width=PROJECTOR_WIDTH,
+                    num_frequencies=NUM_FREQUENCIES,
+                    frequency_step=FREQUENCY_STEP,
+                    peak_limit=MULTI_PEAK_SCAN_LIMIT,
+                )
+                multi_peak_results[dir_key] = mp_pixels
+                
+                if mp_pixels:
+                    print(f"\n  {dir_key.upper()}方向 - 多峰像素 TOP 20（按次峰强度排序）:")
+                    print(f"  {'序号':>4s}  {'像素坐标':>14s}  {'主峰位置':>8s}  {'主峰强度':>8s}  "
+                          f"{'次峰位置':>8s}  {'次峰强度':>8s}  {'次/主比':>8s}")
+                    print(f"  {'─'*4}  {'─'*14}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*8}")
+                    for i, p in enumerate(mp_pixels[:20]):
+                        print(f"  {i+1:4d}  ({p['x']:5d}, {p['y']:5d})  "
+                              f"{p['primary_pos']:8d}  {p['primary_val']:8.4f}  "
+                              f"{p['secondary_pos']:8d}  {p['secondary_val']:8.4f}  "
+                              f"{p['ratio']:8.3f}")
+                else:
+                    print(f"\n  {dir_key.upper()}方向: 未发现多峰像素（阈值={MULTI_PEAK_SCAN_LIMIT}）")
+        
+        # 汇总：合并两个方向的多峰像素（取并集）
+        all_multi_peak_coords = set()
+        for dir_key, mp_list in multi_peak_results.items():
+            for p in mp_list:
+                all_multi_peak_coords.add((p['x'], p['y']))
+        
+        if all_multi_peak_coords:
+            sorted_coords = sorted(all_multi_peak_coords)
+            print(f"\n{'='*60}")
+            print(f"★ 多峰像素汇总: 共 {len(sorted_coords)} 个像素存在多峰")
+            print(f"{'='*60}")
+            print(f"  以下坐标可直接复制到 PIXELS_TO_CORRECT 配置中：")
+            # 格式化为可复制的Python列表
+            if len(sorted_coords) <= 50:
+                coords_str = ", ".join([f"({x}, {y})" for x, y in sorted_coords])
+                print(f"\n  PIXELS_TO_CORRECT = [{coords_str}]")
+            else:
+                print(f"\n  PIXELS_TO_CORRECT = [")
+                for i in range(0, min(len(sorted_coords), 50), 5):
+                    batch = sorted_coords[i:i+5]
+                    line = ", ".join([f"({x}, {y})" for x, y in batch])
+                    print(f"      {line},")
+                if len(sorted_coords) > 50:
+                    print(f"      # ... 共 {len(sorted_coords)} 个，此处仅显示前50个")
+                print(f"  ]")
+            print()
+    
     # ==================== 保存频谱数据 ====================
     spectrum_data_list = []
     
@@ -318,7 +397,7 @@ def run_epipolar_correction(images_cache, output_dir, projector_width, projector
                             pixel_coords_to_correct,
                             cam_intrinsic, cam_distortion, cam_rotation, cam_translation,
                             proj_intrinsic, proj_distortion, proj_rotation, proj_translation,
-                            peak_limit=0.5):
+                            peak_limit=0.5, enable_spectrum_visualization=True):
     """
     执行极线约束后处理校正
     
@@ -326,8 +405,9 @@ def run_epipolar_correction(images_cache, output_dir, projector_width, projector
     
     此函数对指定的像素点执行以下操作：
     1. 使用 MultiPeakDetector 在频谱中找出所有候选峰值
-    2. 使用 EpipolarCorrector 利用极线约束选出最佳匹配
-    3. 更新视差图
+    2. 对校正像素进行频谱可视化分析（可选）
+    3. 使用 EpipolarCorrector 利用极线约束选出最佳匹配
+    4. 更新视差图
     
     Parameters:
     -----------
@@ -349,6 +429,8 @@ def run_epipolar_correction(images_cache, output_dir, projector_width, projector
         投影仪标定参数
     peak_limit : float
         多峰检测阈值，默认0.5
+    enable_spectrum_visualization : bool
+        是否对校正像素生成频谱可视化图，默认True
         
     Returns:
     --------
@@ -410,6 +492,51 @@ def run_epipolar_correction(images_cache, output_dir, projector_width, projector
     
     for i, (x, y) in enumerate(pixel_coords_to_correct):
         print(f"  像素({x},{y}): hor候选={peaks_hor[i]}, ver候选={peaks_ver[i]}")
+    
+    # 步骤1.5: 对校正像素进行频谱可视化分析（与 SPECTRUM_POINTS 相同的分析）
+    if enable_spectrum_visualization:
+        print("\n步骤1.5: 校正像素频谱可视化分析...")
+        
+        epipolar_spectrum_dir = os.path.join(output_dir, "epipolar_spectrum")
+        os.makedirs(epipolar_spectrum_dir, exist_ok=True)
+        
+        for dir_key in ['hor', 'ver']:
+            if dir_key in images_cache:
+                print(f"\n  生成 {dir_key.upper()} 方向频谱数据...")
+                spectrum_data_epipolar = MultiPeakDetector.generate_spectrum_data_for_pixels(
+                    images=images_cache[dir_key],
+                    pixel_coords=pixel_coords_to_correct,
+                    direction=dir_key,
+                    proj_height=projector_height,
+                    proj_width=projector_width,
+                    num_frequencies=num_frequencies,
+                    frequency_step=frequency_step
+                )
+                
+                if spectrum_data_epipolar:
+                    # 保存频谱数据
+                    for pt_idx, sp_data in spectrum_data_epipolar.items():
+                        point = sp_data['point']
+                        sp_save_dir = os.path.join(epipolar_spectrum_dir, 
+                                                    f"pixel_{point[0]}_{point[1]}")
+                        os.makedirs(sp_save_dir, exist_ok=True)
+                        np.save(os.path.join(sp_save_dir, f"spectrum_{dir_key}.npy"), sp_data)
+                    
+                    # 调用频谱可视化
+                    for pt_idx, sp_data in spectrum_data_epipolar.items():
+                        point = sp_data['point']
+                        save_path = os.path.join(epipolar_spectrum_dir,
+                                                  f"pixel_{point[0]}_{point[1]}",
+                                                  f"spectrum_{point[0]}_{point[1]}_{dir_key}_analysis.png")
+                        print(f"  可视化像素({point[0]},{point[1]}) {dir_key.upper()}方向频谱...")
+                        try:
+                            visualize_spectrum(sp_data, save_path)
+                        except Exception as e:
+                            print(f"    ⚠ 可视化失败: {str(e)[:80]}")
+                    
+                    print(f"  ✓ {dir_key.upper()}方向频谱分析图已保存到: {epipolar_spectrum_dir}")
+        
+        print()
     
     # 步骤2: 极线约束校正（恢复自 decode_fsa.py 的 fix_fsa_disparity）
     print("\n步骤2: 极线约束校正...")
@@ -756,7 +883,7 @@ def main():
     PROJECTOR_HEIGHT = 1080     # 投影仪高度（像素）
     
     # -------------------- 2. FSA采集参数 --------------------
-    NUM_FREQUENCIES = 351       # 采集的频率数量（M值）
+    NUM_FREQUENCIES = 151       # 采集的频率数量（M值）
     FREQUENCY_STEP = 1.0        # 频率步长（Hz）
                                 # ★ 当FREQUENCY_STEP=1.0时，FFT长度=投影仪分辨率（零填充）
                                 #   argmax直接输出投影仪坐标，精度1像素
@@ -767,8 +894,8 @@ def main():
     DECODE_DIRECTION = "both"   # 可选: "both", "ver", "hor"
     
     # -------------------- 4. 图像路径配置 --------------------
-    IMAGE_DIR_HOR = r"E:\images\before_2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_horizontal_f0_f150"
-    IMAGE_DIR_VER = r"E:\images\before_2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_vertical_f0_f150"
+    IMAGE_DIR_HOR = r"E:\images\3-22\h"
+    IMAGE_DIR_VER = r"E:\images\3-22\v"
     OUTPUT_DIR = r"results\fsa_decode"
     
     # -------------------- 5. 处理参数 --------------------
@@ -777,31 +904,52 @@ def main():
     VERIFY_SEQUENCE = True
     
     # -------------------- 6. 内存模式选择 --------------------
-    LOW_MEMORY_MODE = True
+    LOW_MEMORY_MODE = False
     
     # -------------------- 7. 频谱分析参数 --------------------
     SPECTRUM_POINTS = (1200, 1000)
+    
+    # -------------------- 7.5 多峰像素扫描（可选） --------------------
+    # 设置为True以在解码后自动扫描所有像素的频谱，找出存在多个显著峰值的像素。
+    # 这些多峰像素可能存在误匹配，扫描结果会以可复制的格式输出，
+    # 方便直接填入 PIXELS_TO_CORRECT 进行极线约束校正。
+    # ★ 注意：扫描过程需要对全图做FFT，耗时约等于一次完整解码。
+    ENABLE_MULTI_PEAK_SCAN = True
+    
+    # 多峰扫描的次峰判定阈值
+    # 对每个像素的频谱，先找到主峰，再抑制主峰旁瓣后寻找次峰。
+    # 次峰归一化幅值超过此阈值的像素被判定为"多峰像素"。
+    # 值越小发现的多峰像素越多，值越大只报告最显著的多峰像素。
+    MULTI_PEAK_SCAN_LIMIT = 0.5
     
     # -------------------- 8. 极线约束校正参数（可选） --------------------
     # 设置为True以启用后处理校正（需要标定参数）
     ENABLE_EPIPOLAR_CORRECTION = False
     
-    # 需要校正的像素坐标列表（仅当ENABLE_EPIPOLAR_CORRECTION=True时使用）
+    # ★ 标定结果文件路径（启用极线约束校正时必须提供）
+    # 程序会自动从该文件中读取相机内参、投影仪内参、旋转矩阵、平移向量等参数，
+    # 无需手动填写各项标定参数。
+    CALIBRATION_FILE = r"标定结果.txt"
+    
+    # 需要校正的相机像素坐标列表（仅当ENABLE_EPIPOLAR_CORRECTION=True时使用）
+    # 格式为 [(x1, y1), (x2, y2), ...]，其中 (x, y) 是相机图像中的像素坐标。
+    # 含义：指定哪些相机像素点需要进行极线约束校正。
+    # 通常选择那些在视差图中明显有误匹配的像素点（例如在反射区域、遮挡边界等）。
+    # 例如 (900, 495) 表示相机图像中第900列、第495行的像素点。
     PIXELS_TO_CORRECT = [(900, 495)]  # 对应原始代码中的 ax=900, ay=495
     
     # 多峰检测阈值（恢复自原始代码中的limit=0.5）
+    # 含义：在频谱的多峰检测中，只有归一化幅值大于此阈值的峰值才会被保留为候选匹配点。
+    # 取值范围 0.0~1.0，值越大过滤越严格（保留的候选峰值越少），
+    # 值越小过滤越宽松（保留更多候选峰值，但可能引入噪声）。
+    # 默认值 0.5 表示只保留幅值超过归一化频谱最大值50%的峰值作为候选。
     PEAK_LIMIT = 0.5
     
-    # 标定参数（需要根据实际标定结果填写）
-    # 以下为示例值，实际使用时请替换为真实标定数据
-    CAM_INTRINSIC = np.eye(3)       # 相机内参 (3x3)
-    CAM_DISTORTION = np.zeros(5)    # 相机畸变系数
-    CAM_ROTATION = np.zeros(3)      # 相机旋转向量 (Rodrigues)
-    CAM_TRANSLATION = np.zeros(3)   # 相机平移向量
-    PROJ_INTRINSIC = np.eye(3)      # 投影仪内参 (3x3)
-    PROJ_DISTORTION = np.zeros(5)   # 投影仪畸变系数
-    PROJ_ROTATION = np.zeros(3)     # 投影仪旋转向量 (Rodrigues)
-    PROJ_TRANSLATION = np.zeros(3)  # 投影仪平移向量
+    # 是否对极线约束校正的像素点生成频谱可视化分析图
+    # 设置为True时，会对 PIXELS_TO_CORRECT 中的每个像素，
+    # 在水平和垂直两个方向分别生成与 SPECTRUM_POINTS 相同格式的8子图频谱分析图，
+    # 保存到 OUTPUT_DIR/epipolar_spectrum/ 目录下。
+    ENABLE_EPIPOLAR_SPECTRUM_VIZ = True
     
     # ========================================================================
     # ✅ 配置参数区域结束
@@ -821,30 +969,49 @@ def main():
         verify_sequence=VERIFY_SEQUENCE,
         low_memory_mode=LOW_MEMORY_MODE,
         spectrum_points=SPECTRUM_POINTS,
-        frequency_step=FREQUENCY_STEP
+        frequency_step=FREQUENCY_STEP,
+        multi_peak_scan=ENABLE_MULTI_PEAK_SCAN,
+        multi_peak_scan_limit=MULTI_PEAK_SCAN_LIMIT
     )
     
     # 执行极线约束校正（如果启用）
     if ENABLE_EPIPOLAR_CORRECTION and output_dir is not None:
         if DECODE_DIRECTION == "both":
-            run_epipolar_correction(
-                images_cache=images_cache,
-                output_dir=OUTPUT_DIR,
-                projector_width=PROJECTOR_WIDTH,
-                projector_height=PROJECTOR_HEIGHT,
-                num_frequencies=NUM_FREQUENCIES,
-                frequency_step=FREQUENCY_STEP,
-                pixel_coords_to_correct=PIXELS_TO_CORRECT,
-                cam_intrinsic=CAM_INTRINSIC,
-                cam_distortion=CAM_DISTORTION,
-                cam_rotation=CAM_ROTATION,
-                cam_translation=CAM_TRANSLATION,
-                proj_intrinsic=PROJ_INTRINSIC,
-                proj_distortion=PROJ_DISTORTION,
-                proj_rotation=PROJ_ROTATION,
-                proj_translation=PROJ_TRANSLATION,
-                peak_limit=PEAK_LIMIT
-            )
+            # ★ 自动从标定文件读取所有标定参数
+            print("\n" + "="*80)
+            print("读取标定文件以获取极线约束校正参数")
+            print("="*80)
+            
+            try:
+                calib_data = CalibrationReader.read_calibration_file(CALIBRATION_FILE)
+                epipolar_params = CalibrationReader.extract_epipolar_params(calib_data)
+                
+                run_epipolar_correction(
+                    images_cache=images_cache,
+                    output_dir=OUTPUT_DIR,
+                    projector_width=PROJECTOR_WIDTH,
+                    projector_height=PROJECTOR_HEIGHT,
+                    num_frequencies=NUM_FREQUENCIES,
+                    frequency_step=FREQUENCY_STEP,
+                    pixel_coords_to_correct=PIXELS_TO_CORRECT,
+                    cam_intrinsic=epipolar_params['cam_intrinsic'],
+                    cam_distortion=epipolar_params['cam_distortion'],
+                    cam_rotation=epipolar_params['cam_rotation'],
+                    cam_translation=epipolar_params['cam_translation'],
+                    proj_intrinsic=epipolar_params['proj_intrinsic'],
+                    proj_distortion=epipolar_params['proj_distortion'],
+                    proj_rotation=epipolar_params['proj_rotation'],
+                    proj_translation=epipolar_params['proj_translation'],
+                    peak_limit=PEAK_LIMIT,
+                    enable_spectrum_visualization=ENABLE_EPIPOLAR_SPECTRUM_VIZ
+                )
+            except FileNotFoundError:
+                print(f"\n❌ 错误: 找不到标定文件: {CALIBRATION_FILE}")
+                print("   请检查 CALIBRATION_FILE 路径是否正确")
+            except Exception as e:
+                print(f"\n❌ 极线约束校正出错: {e}")
+                import traceback
+                traceback.print_exc()
         else:
             print("\n⚠ 极线约束校正需要同时解码两个方向（DECODE_DIRECTION='both'）")
 

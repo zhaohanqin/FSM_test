@@ -44,7 +44,7 @@ if __name__ == "__main__":
     FREQUENCY_STEP = 1.0               # 频率步长（Hz），与解码时一致
                                        # ★ 当FREQUENCY_STEP=1.0时，解码器的FFT长度=投影仪分辨率，
                                        #   峰值归一化基数较大，重建器会自动补偿
-    NUM_FREQUENCIES = 150              # 采集的频率数量（M值），与解码时一致
+    NUM_FREQUENCIES = 151              # 采集的频率数量（M值），与解码时一致
                                        # ★ 当FREQUENCY_STEP=1.0时必须提供此参数，
                                        #   用于计算峰值归一化补偿因子
     

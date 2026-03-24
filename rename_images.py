@@ -437,7 +437,7 @@ if __name__ == "__main__":
     # 直接修改这些参数，然后运行脚本即可
     
     # 目标文件夹路径（支持包含子文件夹的大文件夹）
-    TARGET_DIRECTORY = r"E:\images\PSM_FSM\v"
+    TARGET_DIRECTORY = r"E:\images\3-22\v"
     
     # 输出格式
     OUTPUT_FORMAT = "png"  # 可选: png, jpg, 保持原格式
