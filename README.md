@@ -14,7 +14,9 @@
 
 - 仓库主线功能
 - 主流程
+- 当前文件地图
 - 当前主线代码结构
+- 关键说明文档
 - 每个 `.py` 文件的职责
 - `initial/` 历史代码的定位
 - 后续论文或 AI 分析时建议从哪里切入
@@ -41,6 +43,70 @@
 一句话概括：
 
 > 这是一个围绕“频移法结构光三维重建”的完整研究型代码仓库，包含条纹生成、图像整理、解码、重建、点云分析，以及多轮历史实验版本。
+
+---
+
+## 2.1 当前文件地图
+
+按当前仓库文件来看，最重要的内容可以分为 5 类：
+
+### 当前主线代码
+
+- [FSM_decode_example.py](/E:/code/FSM/FSM_decode_example.py)
+  - 当前 FSA / FSM 解码入口。
+- [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py)
+  - 当前 FSA / FSM 解码核心。
+- [FSM_visualize.py](/E:/code/FSM/FSM_visualize.py)
+  - 解码结果可视化与频谱诊断工具。
+- [FSM_reconstruct_example.py](/E:/code/FSM/FSM_reconstruct_example.py)
+  - 当前三维重建入口。
+- [FSM_reconstruct_core.py](/E:/code/FSM/FSM_reconstruct_core.py)
+  - 当前三维重建核心。
+
+### 说明文档
+
+- [README.md](/E:/code/FSM/README.md)
+  - 仓库总入口和模块地图。
+- [FSM_method_explanation.md](/E:/code/FSM/FSM_method_explanation.md)
+  - FSM / FSA 频移法原理、逐像素解码过程、FFT 策略和代码片段说明。
+- [modification_analysis.md](/E:/code/FSM/modification_analysis.md)
+  - 解码代码关键修改说明，重点解释 FFT 长度修复、多峰检测和极线约束恢复。
+- [点云误差计算原理说明.md](/E:/code/FSM/点云误差计算原理说明.md)
+  - 点云误差计算与比较逻辑说明。
+- [Memory.md](/E:/code/FSM/Memory.md)
+  - 长期稳定仓库上下文。
+- [log.md](/E:/code/FSM/log.md)
+  - 用户手动提交后的进度日志。
+
+### 实验辅助工具
+
+- [rename_images.py](/E:/code/FSM/rename_images.py)
+  - 采集图像批量重命名。
+- [提取指定频率图像.py](/E:/code/FSM/提取指定频率图像.py)
+  - 从完整频率序列中提取指定频率范围。
+- [周期条纹生成/](/E:/code/FSM/周期条纹生成)
+  - 条纹图案生成和图像整理工具。
+- [点云对齐工具.py](/E:/code/FSM/点云对齐工具.py)
+  - FSM 与 PSM 点云坐标系对齐。
+- [点云误差比较文件.py](/E:/code/FSM/点云误差比较文件.py)
+  - 两个点云之间的最近邻误差统计与可视化。
+
+### 运行产物与数据
+
+- [results/fsa_decode](/E:/code/FSM/results/fsa_decode)
+  - 当前 FSA 解码输出，包括视差图、峰值图、校正视差图和频谱分析目录。
+- [results/visualizations](/E:/code/FSM/results/visualizations)
+  - 可视化输出图，例如视差图、统计图、对应关系图。
+- [pointcloud_fsa.ply](/E:/code/FSM/pointcloud_fsa.ply)
+  - 当前 FSM / FSA 重建点云结果。
+- [pointCloud.ply](/E:/code/FSM/pointCloud.ply)
+  - 仓库中保留的另一个点云结果，可用于对照。
+
+### 历史与演进代码
+
+- [initial/](/E:/code/FSM/initial)
+  - 历史实现、早期实验分支、中间重构版本和旧版重建流程。
+  - 默认不作为当前修改目标，除非需要追溯算法来源或写演进分析。
 
 ---
 
@@ -74,6 +140,14 @@
 - [提取指定频率图像.py](/E:/code/FSM/提取指定频率图像.py)
 
 ### 第三步：执行 FSA 解码
+
+频移法原理说明：
+
+- [FSM_method_explanation.md](/E:/code/FSM/FSM_method_explanation.md)
+
+FSM / FSA 解码的核心是：对每个相机像素，读取它在多个频率、四个相移条纹图像中的灰度响应，
+构造复信号 `D = (I0-I2) + j*(I3-I1)`，再沿频率维度做 FFT。
+频谱峰值位置被解释为投影仪坐标，峰值强度作为该像素的解码质量指标。
 
 主入口：
 
@@ -617,12 +691,24 @@ PSA / PSM 点云重建脚本。
 - `disp_ver.npy`
 - `peak_hor.npy`
 - `peak_ver.npy`
-- 一些指定像素的频谱缓存和分析图
+- `disp_hor_corrected.npy`
+- `disp_ver_corrected.npy`
+- `spectrum_point_*`
+  - 指定像素频谱数据和 8 子图分析结果。
+- `epipolar_spectrum/`
+  - 极线约束校正像素的频谱分析结果。
 
 ### 可视化结果
 
 - [results/visualizations](/E:/code/FSM/results/visualizations)
   - 保存可视化脚本生成的图。
+
+常见文件：
+
+- `disparity_hor.png`
+- `disparity_ver.png`
+- `statistics.png`
+- `correspondence_map.png`
 
 ### 点云结果
 
@@ -640,11 +726,12 @@ PSA / PSM 点云重建脚本。
 ### 路线 A：想先抓主线
 
 1. [README.md](/E:/code/FSM/README.md)
-2. [FSM_decode_example.py](/E:/code/FSM/FSM_decode_example.py)
-3. [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py)
-4. [FSM_visualize.py](/E:/code/FSM/FSM_visualize.py)
-5. [FSM_reconstruct_example.py](/E:/code/FSM/FSM_reconstruct_example.py)
-6. [FSM_reconstruct_core.py](/E:/code/FSM/FSM_reconstruct_core.py)
+2. [FSM_method_explanation.md](/E:/code/FSM/FSM_method_explanation.md)
+3. [FSM_decode_example.py](/E:/code/FSM/FSM_decode_example.py)
+4. [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py)
+5. [FSM_visualize.py](/E:/code/FSM/FSM_visualize.py)
+6. [FSM_reconstruct_example.py](/E:/code/FSM/FSM_reconstruct_example.py)
+7. [FSM_reconstruct_core.py](/E:/code/FSM/FSM_reconstruct_core.py)
 
 ### 路线 B：想追溯演进关系
 
@@ -658,10 +745,12 @@ PSA / PSM 点云重建脚本。
 ### 路线 C：想做实验与论文整理
 
 1. 本 README 先建立仓库地图
-2. 看主线解码与重建入口脚本
-3. 看 `modification_analysis.md` 理解关键修改点
-4. 看 `initial/` 中早期过程式脚本追溯算法来源
-5. 看点云对齐与误差比较工具准备对照实验
+2. 看 [FSM_method_explanation.md](/E:/code/FSM/FSM_method_explanation.md) 理解频移法原理与代码实现
+3. 看主线解码与重建入口脚本
+4. 看 [modification_analysis.md](/E:/code/FSM/modification_analysis.md) 理解关键修改点
+5. 看 [点云误差计算原理说明.md](/E:/code/FSM/点云误差计算原理说明.md) 理解点云误差指标
+6. 看 `initial/` 中早期过程式脚本追溯算法来源
+7. 看点云对齐与误差比较工具准备对照实验
 
 ---
 
@@ -681,6 +770,7 @@ PSA / PSM 点云重建脚本。
 4. **为论文撰写方法章节**
    - 重点看：
      - 本 README 第 2、3、4 节
+     - [FSM_method_explanation.md](/E:/code/FSM/FSM_method_explanation.md)
      - [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py)
      - [FSM_reconstruct_core.py](/E:/code/FSM/FSM_reconstruct_core.py)
 5. **为论文撰写实验章节**
@@ -689,6 +779,7 @@ PSA / PSM 点云重建脚本。
      - [FSM_visualize.py](/E:/code/FSM/FSM_visualize.py)
      - [点云对齐工具.py](/E:/code/FSM/点云对齐工具.py)
      - [点云误差比较文件.py](/E:/code/FSM/点云误差比较文件.py)
+     - [点云误差计算原理说明.md](/E:/code/FSM/点云误差计算原理说明.md)
 6. **写“算法演进 / 改进点”章节**
    - 重点看：
      - [modification_analysis.md](/E:/code/FSM/modification_analysis.md)
@@ -698,10 +789,10 @@ PSA / PSM 点云重建脚本。
 ### 后续如果让 AI 写论文，建议给它的任务可以是
 
 - “根据 README + 主线代码，写系统总体设计章节”
-- “根据 README + decode 核心代码，写频移法解码原理与实现章节”
+- “根据 README + FSM_method_explanation.md + decode 核心代码，写频移法解码原理与实现章节”
 - “根据 README + reconstruct 核心代码，写三维重建流程章节”
 - “根据 README + initial 历史代码，写算法演进与改进分析章节”
-- “根据 README + 点云比较工具，写实验评价指标与误差分析章节”
+- “根据 README + 点云比较工具 + 点云误差计算原理说明.md，写实验评价指标与误差分析章节”
 
 ---
 
