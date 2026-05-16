@@ -37,17 +37,31 @@ FSA三维重建核心模块（重构版）
 - 便于测试和维护
 - 易于扩展新功能
 
-适配说明（FFT长度策略恢复）：
+适配说明（FFT长度通用公式）：
 ----------------------------
-FSM_decode_core.py 恢复了原始代码 decode_fsa.py 中的FFT长度策略：
-- 当 frequency_step=1.0 时，FFT长度=投影仪分辨率（零填充插值）
-- 峰值归一化基数从 num_frequencies 变为投影仪分辨率
+FSM_decode_core.py 采用通用公式计算FFT长度：
+  fft_length = int(round(proj_dim / frequency_step))
 
-这导致峰值图（peak maps）的数值范围发生变化：
-  peak_new ≈ peak_old × (num_frequencies / proj_dim)
+典型情况：
+  frequency_step=1.0 → fft_length=proj_dim（标准，与原始代码一致）
+  frequency_step=0.5 → fft_length=2*proj_dim（新增支持）
 
-本模块新增了峰值归一化补偿逻辑，确保 peak_limit 阈值的语义一致性：
-用户仍可使用与旧版相同的 peak_limit 值（如0.8），模块内部会自动补偿。
+这导致峰值图（peak maps）的归一化基数随 frequency_step 变化：
+  peak = max(C_valid) / fft_length = max(C_valid) / (proj_dim / frequency_step)
+
+对于理想信号，峰值近似为：
+  peak ≈ M * frequency_step * A / proj_dim
+        = M * A / (proj_dim / frequency_step)
+        = M * A / fft_length
+
+其中 M = num_frequencies，A 为信号幅度。
+
+本模块通过通用补偿因子 (fft_length / M) 自动将峰值映射回 M 归一化等效值，
+确保 peak_limit 阈值语义对所有 frequency_step 值保持一致：
+  fft_length_hor = int(round(proj_height / frequency_step))
+  fft_length_ver = int(round(proj_width  / frequency_step))
+  peak_scale_hor = fft_length_hor / M
+  peak_scale_ver = fft_length_ver / M
 
 作者：基于 reconstruct_fsa.py 提取并重构
 日期：2025-11-07（初版），2025-11-09（重构），2025-xx-xx（适配FFT长度策略恢复）
@@ -644,18 +658,20 @@ class FSAReconstructor:
     这种设计使得代码结构更清晰，职责分离，便于维护和扩展。
     同时保持了原有的API接口，确保向后兼容性。
     
-    ★ 适配FFT长度策略恢复说明：
+    ★ 适配说明（通用FFT长度公式）：
     ---------------------------
-    新版FSA解码（FSM_decode_core.py）恢复了原始代码的FFT长度策略：
-    当 frequency_step=1.0 时，FFT长度=投影仪分辨率（而非频率数量M）。
-    
-    这导致峰值图的归一化基数发生变化：
-    - 旧版：peak = |FFT[k]| / M
-    - 新版：peak = |FFT[k]| / proj_dim  （proj_dim >> M）
-    
-    因此同一信号的峰值在新版中约为旧版的 M/proj_dim 倍。
-    本类通过 frequency_step 和 num_frequencies 参数自动补偿这一差异，
-    确保 peak_limit 阈值的语义与旧版一致。
+    新版FSA解码（FSM_decode_core.py）采用通用公式计算FFT长度：
+      fft_length = int(round(proj_dim / frequency_step))
+
+    典型情况：
+      frequency_step=1.0 → fft_length=proj_dim（标准）
+      frequency_step=0.5 → fft_length=2*proj_dim（新增支持）
+
+    这导致峰值图的归一化基数随 frequency_step 变化：
+      peak = max(C_valid) / fft_length（而非除以 M）
+
+    本类通过通用补偿因子 (fft_length / M) 自动将峰值补偿到 M 归一化等效值，
+    确保 peak_limit 阈值语义对所有 frequency_step 值保持一致。
     """
     
     def __init__(self, 
@@ -680,12 +696,17 @@ class FSAReconstructor:
             投影仪高度，默认为 1080
         frequency_step : float
             频率步长，需与FSA解码时使用的值一致，默认为1.0
-            ★ 当frequency_step=1.0时，解码器的FFT长度=投影仪分辨率，
-            峰值归一化基数较大，本模块会自动补偿峰值阈值。
+            ★ 决定解码时使用的FFT长度（通用公式：fft_length = proj_dim / frequency_step）：
+            - 1.0（标准）：FFT长度=投影仪分辨率
+            - 0.5（新增）：FFT长度=2×投影仪分辨率，有效bin=[0,proj_dim-1]
+            本模块根据 frequency_step 和 num_frequencies 自动补偿峰值归一化。
         num_frequencies : int, optional
             解码时使用的频率数量M，需与FSA解码时使用的值一致。
-            ★ 当frequency_step=1.0时必须提供此参数，用于计算峰值补偿因子。
-            当frequency_step!=1.0时可不提供（峰值归一化基数即为M，无需补偿）。
+            ★ 强烈建议始终提供此参数，用于精确峰值补偿（适配通用FFT长度公式）。
+            - frequency_step=1.0, M=151：补偿因子=proj_dim/151
+            - frequency_step=0.5, M=301：补偿因子=2*proj_dim/301
+            通用公式：补偿因子 = fft_length/M = proj_dim/(M*frequency_step)
+            未提供时启用自动检测模式，但精确度低于显式提供。
         """
         self.proj_width = projector_width
         self.proj_height = projector_height
@@ -748,13 +769,15 @@ class FSAReconstructor:
         print(f"  投影仪分辨率: {self.proj_width} x {self.proj_height}")
         print(f"  频率步长: {self.frequency_step}")
         print(f"  频率数量: {self.num_frequencies}")
-        if self.frequency_step == 1.0 and self.num_frequencies is not None:
-            print(f"  ★ 峰值补偿模式: 已启用（frequency_step=1.0）")
-            print(f"    水平方向补偿因子: {self.proj_height / self.num_frequencies:.4f}")
-            print(f"    垂直方向补偿因子: {self.proj_width / self.num_frequencies:.4f}")
-        elif self.frequency_step == 1.0 and self.num_frequencies is None:
-            print(f"  ⚠ 警告: frequency_step=1.0 但未提供 num_frequencies，")
-            print(f"    峰值补偿将不生效，peak_limit 需要手动调整！")
+        if self.num_frequencies is not None:
+            fft_length_hor = int(round(self.proj_height / self.frequency_step))
+            fft_length_ver = int(round(self.proj_width  / self.frequency_step))
+            print(f"  ★ 峰值补偿模式: 已启用（通用公式，适配任意 frequency_step）")
+            print(f"    FFT长度: 水平={fft_length_hor}（proj_height/step），垂直={fft_length_ver}（proj_width/step）")
+            print(f"    水平方向补偿因子: {fft_length_hor / self.num_frequencies:.4f}（= {fft_length_hor}/{self.num_frequencies}）")
+            print(f"    垂直方向补偿因子: {fft_length_ver / self.num_frequencies:.4f}（= {fft_length_ver}/{self.num_frequencies}）")
+        else:
+            print(f"  ⚠ 警告: 未提供 num_frequencies，峰值补偿将不生效，peak_limit 需手动调整！")
         print(f"  三角测量引擎已初始化")
     
     def _reconstruct_pointcloud(self,
@@ -827,43 +850,42 @@ class FSAReconstructor:
         
         # 峰值过滤
         if peak_hor is not None and peak_ver is not None:
-            # ★ 适配FFT长度策略恢复：峰值归一化补偿
-            # 当 frequency_step=1.0 时，解码器的峰值按投影仪分辨率归一化（fft_length=proj_dim），
-            # 而非按频率数量M归一化。同一信号的峰值约为旧版的 M/proj_dim 倍。
-            # 为使 peak_limit 阈值语义一致，将峰值补偿回M归一化等效值。
-            # 水平方向（hor）FFT长度=proj_height，垂直方向（ver）FFT长度=proj_width，
-            # 两个方向的补偿因子不同，因此需要分别补偿后再取最小值。
-            if self.frequency_step == 1.0 and self.num_frequencies is not None:
-                peak_scale_hor = self.proj_height / self.num_frequencies
-                peak_scale_ver = self.proj_width / self.num_frequencies
+            # ★ 通用公式峰值补偿（适配任意 frequency_step，包含 0.5）
+            # 解码时 fft_length = int(round(proj_dim / frequency_step))
+            # 解码时 peak = max(C_valid) / fft_length
+            # 补偿回等效 M 归一化：peak_compensated = peak × (fft_length / M)
+            # 通用补偿因子 = proj_dim / (M × frequency_step)
+            if self.num_frequencies is not None:
+                fft_length_hor = int(round(self.proj_height / self.frequency_step))
+                fft_length_ver = int(round(self.proj_width  / self.frequency_step))
+                peak_scale_hor = fft_length_hor / self.num_frequencies
+                peak_scale_ver = fft_length_ver / self.num_frequencies
                 peak_hor_compensated = peak_hor * peak_scale_hor
                 peak_ver_compensated = peak_ver * peak_scale_ver
                 peak_min = np.minimum(peak_hor_compensated, peak_ver_compensated)
-                print(f"\n  ★ 峰值归一化补偿（适配FFT长度策略恢复）:")
-                print(f"    解码时FFT长度: 水平={self.proj_height}, 垂直={self.proj_width}")
-                print(f"    频率数量M={self.num_frequencies}")
-                print(f"    水平方向补偿因子: ×{peak_scale_hor:.4f}")
-                print(f"    垂直方向补偿因子: ×{peak_scale_ver:.4f}")
+                print(f"\n  ★ 峰值归一化补偿（通用公式，适配 frequency_step={self.frequency_step}）:")
+                print(f"    frequency_step={self.frequency_step}，M={self.num_frequencies}")
+                print(f"    解码时FFT长度: 水平={fft_length_hor}，垂直={fft_length_ver}")
+                print(f"    水平方向补偿因子: ×{peak_scale_hor:.4f} (= {fft_length_hor}/{self.num_frequencies})")
+                print(f"    垂直方向补偿因子: ×{peak_scale_ver:.4f} (= {fft_length_ver}/{self.num_frequencies})")
                 print(f"    补偿前峰值范围: hor=[{peak_hor.min():.4f}, {peak_hor.max():.4f}], "
                       f"ver=[{peak_ver.min():.4f}, {peak_ver.max():.4f}]")
                 print(f"    补偿后峰值范围: hor=[{peak_hor_compensated.min():.4f}, {peak_hor_compensated.max():.4f}], "
                       f"ver=[{peak_ver_compensated.min():.4f}, {peak_ver_compensated.max():.4f}]")
             else:
                 peak_min = np.minimum(peak_hor, peak_ver)
-                # ★ 自动检测：如果峰值最大值远小于peak_limit，说明解码使用了FFT长度=投影仪分辨率
-                # 此时peak_limit的数值语义不匹配，需要自动调整
+                # ★ 自动检测：如果峰值最大值远小于peak_limit，说明解码使用了
+                # 通用公式（fft_length = proj_dim/step），此时峰值归一化基数为 fft_length 而非 M。
+                # 自动按比例缩放 peak_limit 以保持同等过滤严格度。
                 raw_peak_max = peak_min.max()
                 if raw_peak_max > 0 and raw_peak_max < peak_limit * 0.5:
-                    # 峰值远小于阈值，自动按比例缩放peak_limit以保持同等过滤严格度
-                    # 例如：peak_limit=0.8表示保留峰值>80%最大值的点
-                    # 若最大峰值=0.11，则等效阈值 = 0.8 × 0.11 = 0.088
                     adjusted_peak_limit = peak_limit * raw_peak_max
                     print(f"\n  ⚠ 自动检测: 峰值最大值({raw_peak_max:.4f})远小于峰值阈值({peak_limit})")
-                    print(f"    这说明解码使用了FFT长度=投影仪分辨率的策略（frequency_step=1.0）")
+                    print(f"    这说明解码使用了通用公式（fft_length = proj_dim / frequency_step）")
                     print(f"    自动调整峰值阈值: {peak_limit} → {adjusted_peak_limit:.4f}")
                     print(f"    (保持同等过滤严格度: 保留峰值>{peak_limit*100:.0f}%最大值的点)")
-                    print(f"    提示: 建议在FSAReconstructor构造时传入frequency_step和num_frequencies参数")
-                    print(f"          以获得更精确的峰值补偿")
+                    print(f"    提示: 建议在FSAReconstructor构造时传入 num_frequencies 参数")
+                    print(f"          以获得更精确的峰值补偿（适配任意 frequency_step）")
                     peak_limit = adjusted_peak_limit
             
             print(f"\n峰值图统计信息:")

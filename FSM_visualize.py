@@ -46,8 +46,9 @@ class FSAVisualizer:
         frequency_step : float
             频率步长，默认1.0
             ★ 需要与解码时使用的频率步长一致
-            - 当frequency_step=1.0时，FFT长度=投影仪分辨率（零填充）
-            - 当frequency_step!=1.0时，FFT长度=频率数量M
+            - 当frequency_step=1.0时，FFT长度=投影仪分辨率（标准模式）
+            - 当frequency_step=0.5时，FFT长度=2×投影仪分辨率（新增支持）
+            - 通用公式：FFT长度 = int(round(proj_dim / frequency_step))
         """
         self.result_dir = result_dir
         self.peak_threshold = peak_threshold  # 统一的阈值参数
@@ -68,32 +69,41 @@ class FSAVisualizer:
     
     def _get_fft_length(self, direction: str, num_frequencies: int):
         """
-        获取与解码过程一致的FFT长度
-        
-        ★ 此方法恢复了与 FSADecoder._get_fft_params() 一致的FFT长度策略：
-        - 当 frequency_step=1.0 时，FFT长度 = 投影仪分辨率（零填充插值）
-        - 当 frequency_step!=1.0 时，FFT长度 = 频率数量M
-        
+        获取与解码过程一致的FFT长度和有效bin数量。
+
+        ★ 使用通用公式（与 FSADecoder._calc_fft_params / _get_fft_params 完全一致）：
+          fft_length   = int(round(proj_dim / frequency_step))
+          valid_length = proj_dim   ← 频谱峰值只在前 proj_dim 个 bin 中搜索
+
+        典型情况：
+          frequency_step = 1.0  → fft_length = proj_dim（标准，向后兼容）
+          frequency_step = 0.5  → fft_length = 2*proj_dim, valid_length = proj_dim
+          frequency_step = 0.25 → fft_length = 4*proj_dim, valid_length = proj_dim
+
         Parameters:
         -----------
         direction : str
             'hor' 或 'ver'
         num_frequencies : int
-            频率数量 M
-            
+            频率数量 M（保留参数，向后兼容；当前通用公式不依赖 M）
+
         Returns:
         --------
-        fft_length : int
-            FFT长度
+        fft_length   : int  FFT变换长度
+        valid_length : int  有效bin数量（= proj_dim），频谱可视化时的合法坐标上限
         """
         proj_dim = self.projector_height if direction == 'hor' else self.projector_width
-        
+
         if self.frequency_step == 1.0:
-            fft_length = proj_dim
+            fft_length   = proj_dim
+            valid_length = proj_dim
         else:
-            fft_length = num_frequencies
-        
-        return fft_length
+            # ★ 通用公式：fft_length = proj_dim / step，保证 bin 编号对应投影仪坐标
+            # valid_length = proj_dim，排除后半段负频率区域
+            fft_length   = int(round(proj_dim / self.frequency_step))
+            valid_length = proj_dim
+
+        return fft_length, valid_length
     
     def load_results(self):
         """加载解码结果"""
@@ -404,9 +414,9 @@ class FSAVisualizer:
         Ds = I3 - I1
         D = Dc + 1j * Ds
         
-        # ★ 使用与新版解码一致的FFT长度策略
-        # 替换原有硬编码的 N=768/1024
-        N = self._get_fft_length(direction, num_frequencies)
+        # ★ 使用通用公式（与新版解码完全一致）：fft_length = proj_dim / step
+        # valid_length = proj_dim，频谱峰值搜索仅限 [0, valid_length-1]
+        N, valid_length = self._get_fft_length(direction, num_frequencies)
         
         C = np.fft.fft(D, n=N)
         C_magnitude = np.abs(C) / N
@@ -419,7 +429,10 @@ class FSAVisualizer:
             decoded_coord = self.disparity_ver[y, x] if self.disparity_ver is not None else None
             peak_value = self.peak_ver[y, x] if self.peak_ver is not None else None
         
-        print(f"  FFT长度: {N} ({'投影仪分辨率' if self.frequency_step == 1.0 else '频率数量M'})")
+        print(f"  FFT长度: {N}，有效bin范围: 0~{valid_length-1}")
+        if N != valid_length:
+            print(f"  ★ fft_length({N}) = proj_dim({valid_length}) / step({self.frequency_step})")
+            print(f"    bin {valid_length}~{N-1} 属于负频率区域（不对应合法投影仪坐标）")
         print(f"  频率步长: {self.frequency_step}")
         if decoded_coord is not None:
             print(f"  解码坐标: {decoded_coord:.2f}")
@@ -449,30 +462,35 @@ class FSAVisualizer:
         axes[0, 1].legend()
         axes[0, 1].grid(True, alpha=0.3)
         
-        # 左下：完整频谱
-        axes[1, 0].plot(C_magnitude, '-', linewidth=1.5)
+        # 左下：有效频谱（限定在投影仪合法坐标范围内）
+        axes[1, 0].plot(range(valid_length), C_magnitude[:valid_length], '-', linewidth=1.5,
+                        label=f'有效频谱 [0, {valid_length-1}]')
         if decoded_coord is not None:
             axes[1, 0].axvline(x=decoded_coord, color='red', linestyle='--', 
                               label=f'解码位置={decoded_coord:.1f}')
-        axes[1, 0].set_xlabel('投影仪坐标')
+        axes[1, 0].set_xlabel(f'投影仪坐标 (有效范围 0~{valid_length-1})')
         axes[1, 0].set_ylabel('幅值')
-        axes[1, 0].set_title(f'完整频谱 (FFT长度={N}, 峰值={peak_value:.4f})' if peak_value else f'完整频谱 (FFT长度={N})')
+        title_str = f'有效频谱 (FFT={N}, 有效bin={valid_length}'
+        if peak_value is not None:
+            title_str += f', 峰值={peak_value:.4f}'
+        title_str += ')'
+        axes[1, 0].set_title(title_str)
         axes[1, 0].legend()
         axes[1, 0].grid(True, alpha=0.3)
         
-        # 右下：局部放大
+        # 右下：局部放大（在有效bin范围内）
         if decoded_coord is not None:
             center = int(decoded_coord)
             half_width = 50
             start = max(0, center - half_width)
-            end = min(N, center + half_width)
+            end = min(valid_length, center + half_width)  # ★ 使用 valid_length 而非 N
             
             axes[1, 1].plot(range(start, end), C_magnitude[start:end], 'o-', linewidth=2)
             axes[1, 1].axvline(x=decoded_coord, color='red', linestyle='--', 
                               label=f'峰值位置={decoded_coord:.2f}')
             axes[1, 1].set_xlabel('投影仪坐标')
             axes[1, 1].set_ylabel('幅值')
-            axes[1, 1].set_title('频谱局部放大')
+            axes[1, 1].set_title('频谱局部放大（有效范围内）')
             axes[1, 1].legend()
             axes[1, 1].grid(True, alpha=0.3)
         
@@ -494,7 +512,7 @@ def main():
     # ========================================================================
     
     # -------------------- 1. 路径配置 --------------------
-    BASE_DIR = r"E:\code\FSM"                                    # 基础目录
+    BASE_DIR = r"H:\code\FSM"                                    # 基础目录
     RESULT_DIR = os.path.join(BASE_DIR, "results", "fsa_decode")   # 解码结果目录
     OUTPUT_DIR = os.path.join(BASE_DIR, "results", "visualizations") # 可视化输出目录
     
@@ -510,9 +528,10 @@ def main():
     # ★ 需要与解码时使用的参数一致
     PROJECTOR_WIDTH = 1920     # 投影仪宽度（像素）
     PROJECTOR_HEIGHT = 1080    # 投影仪高度（像素）
-    FREQUENCY_STEP = 1.0       # 频率步长
-                               # ★ 当FREQUENCY_STEP=1.0时，FFT长度=投影仪分辨率
-                               # ★ 当FREQUENCY_STEP!=1.0时，FFT长度=频率数量M
+    FREQUENCY_STEP = 0.5       # 频率步长（需与解码时一致）
+                               # ★ 1.0（标准）：FFT长度=投影仪分辨率，有效bin=全部
+                               # ★ 0.5（新增）：FFT长度=2×投影仪分辨率，有效bin=[0,proj_dim-1]
+                               # ★ 通用公式：FFT长度 = int(round(proj_dim / frequency_step))
     
     # ========================================================================
     # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改

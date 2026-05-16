@@ -30,7 +30,7 @@ if __name__ == "__main__":
     # ========================================================================
     
     # -------------------- 1. 标定文件路径 --------------------
-    CALIBRATION_FILE = "标定结果.txt"  # 相机-投影仪标定结果文件
+    CALIBRATION_FILE = "标定结果2.txt"  # 相机-投影仪标定结果文件
     
     # -------------------- 2. 相机参数 --------------------
     CAMERA_IMAGE_SIZE = (2448, 2048)   # 相机图像尺寸 (宽, 高)
@@ -40,13 +40,31 @@ if __name__ == "__main__":
     PROJECTOR_HEIGHT = 1080          # 投影仪高度（像素）
     
     # -------------------- 4. FSA解码参数（需与解码时一致）--------------------
-    # ★ 以下两个参数必须与 FSM_decode_example.py 中的设置保持一致
-    FREQUENCY_STEP = 1.0               # 频率步长（Hz），与解码时一致
-                                       # ★ 当FREQUENCY_STEP=1.0时，解码器的FFT长度=投影仪分辨率，
-                                       #   峰值归一化基数较大，重建器会自动补偿
-    NUM_FREQUENCIES = 151              # 采集的频率数量（M值），与解码时一致
-                                       # ★ 当FREQUENCY_STEP=1.0时必须提供此参数，
-                                       #   用于计算峰值归一化补偿因子
+    # ★ 以下两个参数必须与 FSM_decode_example.py 中的设置保持严格一致
+    FREQUENCY_STEP = 0.5               # 频率步长（Hz），与解码时一致
+                                       #
+                                       # ★★★ FREQUENCY_STEP 说明 ★★★
+                                       #
+                                       # ● FREQUENCY_STEP = 1.0（标准模式）
+                                       #   频率: 0,1,...,150，M=151，总图像=604张
+                                       #   解码时 FFT长度=投影仪分辨率
+                                       #   重建时 补偿因子=proj_dim/M
+                                       #
+                                       # ● FREQUENCY_STEP = 0.5（半步长，新增支持）
+                                       #   频率: 0,0.5,1,...,150，须设 NUM_FREQUENCIES=301
+                                       #   解码时 FFT长度=2×投影仪分辨率
+                                       #   重建时 补偿因子=2*proj_dim/M ≈ proj_dim/151（与标准近似）
+                                       #   ⚠ 切记同步修改 NUM_FREQUENCIES = 301
+                                       #
+                                       # 通用公式（适配任意步长）：
+                                       #   fft_length = proj_dim / FREQUENCY_STEP
+                                       #   补偿因子   = fft_length / NUM_FREQUENCIES
+                                       #
+    NUM_FREQUENCIES = 301              # 采集的频率数量（M值），与解码时一致
+                                       # ★ 必须提供此参数以启用精确峰值补偿
+                                       #   - FREQUENCY_STEP=1.0 时：设为 151
+                                       #   - FREQUENCY_STEP=0.5 时：设为 301
+                                       #   补偿因子 = int(round(proj_dim/FREQUENCY_STEP)) / NUM_FREQUENCIES
     
     # -------------------- 5. 数据路径配置 --------------------
     RESULT_DIR = "results/fsa_decode"  # 存放解码结果的文件夹
@@ -106,6 +124,11 @@ if __name__ == "__main__":
     print(f"  解码结果目录: {RESULT_DIR}")
     print(f"  过采样倍数: {OVERSAMPLE}")
     print(f"  峰值阈值: {PEAK_LIMIT}")
+    print(f"  频率步长: {FREQUENCY_STEP}，频率数量: {NUM_FREQUENCIES}")
+    _fft_h = int(round(PROJECTOR_HEIGHT / FREQUENCY_STEP))
+    _fft_w = int(round(PROJECTOR_WIDTH  / FREQUENCY_STEP))
+    print(f"  ★ 解码时FFT长度: 水平={_fft_h}（proj_height/step），垂直={_fft_w}（proj_width/step）")
+    print(f"  ★ 峰值补偿因子: 水平×{_fft_h/NUM_FREQUENCIES:.4f}，垂直×{_fft_w/NUM_FREQUENCIES:.4f}")
     print(f"  白光图像: {WHITE_IMAGE_PATH if WHITE_IMAGE_PATH else '未配置（点云将为灰色）'}")
     if MIN_DISTANCE is not None or MAX_DISTANCE is not None:
         print(f"  距离过滤: [{MIN_DISTANCE or '无限制'}, {MAX_DISTANCE or '无限制'}] mm")
