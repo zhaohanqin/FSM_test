@@ -86,10 +86,10 @@ if __name__ == "__main__":
     # 
     # 示例：
     #   WHITE_IMAGE_PATH = "white_light.png"           # 使用白光图像的颜色
-    #   WHITE_IMAGE_PATH = r"F:\data\white.png"       # 使用绝对路径
+    WHITE_IMAGE_PATH = r"E:\images\before_2026_5_23\before_2025_12_27\images_FSM\place1\04_bookshelf_white_cycle0_5\FSM_horizontal_f0_f150\4.png"       # 使用绝对路径
     #   WHITE_IMAGE_PATH = None                        # 不使用颜色，点云为灰色
     #
-    WHITE_IMAGE_PATH = None            # 设为None则点云使用默认灰色
+    # WHITE_IMAGE_PATH = None            # 设为None则点云使用默认灰色
     
     # -------------------- 7. 距离过滤参数（可选）--------------------
     MIN_DISTANCE = None                # 最小距离限制（mm），None表示不限制
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     PEAK_VER_FILE = os.path.join(RESULT_DIR, "peak_ver.npy")
     
     # -------------------- 9. 输出文件路径 --------------------
-    OUTPUT_PLY = "pointcloud_fsa.ply"  # 输出点云文件名
+    OUTPUT_PLY = "results/pointcloud_fsa.ply"  # 输出点云文件名
     
     # ========================================================================
     # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改
