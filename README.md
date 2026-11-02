@@ -32,7 +32,7 @@
 2. **采集与整理图像**
    - 将采集结果重命名、分组、提取指定频率范围图像。
 3. **FSA 解码**
-   - 通过四步相移构造复信号，再做 DFT / FFT，从相机像素恢复投影仪坐标。
+   - 通过相移条纹构造复信号（默认四步；可选 **2+1 相移**），再沿频率做 FFT，从相机像素恢复投影仪坐标。
 4. **解码结果可视化与诊断**
    - 查看视差图、峰值图、频谱图、统计图。
 5. **三维重建**
@@ -77,6 +77,22 @@
   - 长期稳定仓库上下文。
 - [文档/log.md](/E:/code/FSM/文档/log.md)
   - 用户手动提交后的进度日志。
+### 2+1 相移模式资料（研究 / 实测 / 对照脚本）
+
+与主线解码集成的 **2+1 相移** 说明、实测图表和独立验证脚本集中在：
+
+- [2plus1_MODE/README.md](/E:/code/FSM/2plus1_MODE/README.md)
+  - 2+1 目录索引（实测说明、频谱结果、脚本入口）。
+- [2plus1_MODE/](/E:/code/FSM/2plus1_MODE/)
+  - 本目录收纳 2+1 相关文档与实验附件，**不替代**根目录 `FSM_decode_*.py` 的运行入口。
+- [2plus1_MODE/2plus1替代四步相移说明.md](/E:/code/FSM/2plus1_MODE/2plus1替代四步相移说明.md)
+  - 书架垂直数据实测结论、整数列差 1 说明、逐像素频谱索引。
+- [2plus1_MODE/2plus1_逐像素频谱/](/E:/code/FSM/2plus1_MODE/2plus1_逐像素频谱/)
+  - 有效像素误差表、`decode_ab_test.md`、抽样像素 6 张沿频率诊断图。
+- [2plus1_MODE/FSM_2plus1/README.md](/E:/code/FSM/2plus1_MODE/FSM_2plus1/README.md)
+  - 2+1 理论推导、仿真与对话纪要（长文）。
+- [2plus1_MODE/FSM_2plus1/scripts/verify_decode_2plus1.py](/E:/code/FSM/2plus1_MODE/FSM_2plus1/scripts/verify_decode_2plus1.py)
+  - 四步 vs 2+1 主线解码 A/B，输出到 `results/fsa_decode_four/` 与 `results/fsa_decode_2plus1/`。
 
 ### 实验辅助工具
 
@@ -95,6 +111,8 @@
 
 - [results/fsa_decode](/E:/code/FSM/results/fsa_decode)
   - 当前 FSA 解码输出，包括视差图、峰值图、校正视差图和频谱分析目录。
+- [results/fsa_decode_four](/E:/code/FSM/results/fsa_decode_four)、[results/fsa_decode_2plus1](/E:/code/FSM/results/fsa_decode_2plus1)
+  - 2+1 A/B 对照解码输出（与 `verify_decode_2plus1.py` 配套）。
 - [results/visualizations](/E:/code/FSM/results/visualizations)
   - 可视化输出图，例如视差图、统计图、对应关系图。
 - [results/pointcloud_fsa.ply](/E:/code/FSM/results/pointcloud_fsa.ply)
@@ -145,9 +163,27 @@
 
 - [文档/FSM_method_explanation.md](/E:/code/FSM/文档/FSM_method_explanation.md)
 
-FSM / FSA 解码的核心是：对每个相机像素，读取它在多个频率、四个相移条纹图像中的灰度响应，
-构造复信号 `D = (I0-I2) + j*(I3-I1)`，再沿频率维度做 FFT。
-频谱峰值位置被解释为投影仪坐标，峰值强度作为该像素的解码质量指标。
+FSM / FSA 解码的核心是：对每个相机像素，沿 **M 个频率** 构造复数序列 `D`，再对该序列做 FFT；
+频谱主峰位置对应投影仪坐标，峰值强度为解码质量。
+
+**相移与复数构造**（由 `PhaseShiftDemodulator` 完成，FFT 及之后与模式无关）：
+
+| 配置 | 图像序列 | 复数 |
+| --- | --- | --- |
+| `PHASE_SHIFT_MODE="four_step"`（默认） | **4M** 张：`0..3`=频率0 四帧，… | `C = (I0-I2) + j(I3-I1)` |
+| `PHASE_SHIFT_MODE="two_plus_one"` | 见下表 | `C = 2*((I0-A) + j(A-I1))` |
+
+2+1 模式下 `BACKGROUND_MODE`（推荐 **`auto`**）决定如何读图、背景 `A` 从何而来：
+
+| `BACKGROUND_MODE` | 张数 | 读图顺序 | 背景 A |
+| --- | ---: | --- | --- |
+| `auto` | 自动 | 604 张→按四步文件夹；303 张→按原生 2+1 | 见下行 |
+| `a4_per_frequency` | **4M** | 与四步相同 | 每频率 `(I0+I1+I2+I3)/4` |
+| `shared_gray` | **2M+1** | `0.png`=共享背景；`1,2`=f0 的 I0,I1；`3,4`=f1… | 第 0 张图 |
+
+在 [FSM_decode_example.py](/E:/code/FSM/FSM_decode_example.py) 配置区修改 `PHASE_SHIFT_MODE`、`BACKGROUND_MODE` 后运行即可；输出仍为 `disp_*.npy` / `peak_*.npy`，重建入口无需改格式。
+
+实测结论与频谱图见 [2plus1_MODE/2plus1替代四步相移说明.md](/E:/code/FSM/2plus1_MODE/2plus1替代四步相移说明.md)。
 
 主入口：
 
@@ -218,11 +254,13 @@ FSM / FSA 解码的核心是：对每个相机像素，读取它在多个频率�
 主要类：
 
 - `ImageLoader`
-  - 负责条纹图像序列加载、缓存、序列检查。
+  - 加载条纹序列（四步 **4M** 或 2+1 **2M+1**）、缓存（`images_cache.npy` / `images_cache_2plus1.npy`）、序列校验。
+- `PhaseShiftDemodulator`
+  - **解耦层**：原始图像 → 形状 `(M,H,W)` 的复数栈；支持 `four_step` / `two_plus_one` 与背景 `auto` / `a4_per_frequency` / `shared_gray` 等。
 - `CalibrationReader`
   - 读取 `标定结果.txt`，提取相机与投影仪标定参数，供极线约束使用。
 - `DFTProcessor`
-  - 构造复信号并执行 FFT / DFT。
+  - FFT / DFT 相关工具（频域变换与峰值侧辅助）。
 - `PeakDetector`
   - 从频谱中找主峰，并支持亚像素细化。
 - `MultiPeakDetector`
@@ -237,6 +275,7 @@ FSM / FSA 解码的核心是：对每个相机像素，读取它在多个频率�
 1. 把早期 `decode_fsa.py` 的逻辑模块化。
 2. 修复了关键的 **FFT 长度选择问题**。
 3. 恢复了 **多峰检测** 和 **极线约束校正** 两个重要后处理能力。
+4. 通过 **`PhaseShiftDemodulator`** 支持 **2+1 相移**，且 FFT / 峰值 / `disp_*.npy` 格式与四步共用。
 
 #### [FSM_decode_example.py](/E:/code/FSM/FSM_decode_example.py)
 
@@ -245,13 +284,14 @@ FSM / FSA 解码的核心是：对每个相机像素，读取它在多个频率�
 主要职责：
 
 - 配置投影仪尺寸、频率数、频率步长
+- 配置 **`PHASE_SHIFT_MODE`**（`four_step` | `two_plus_one`）与 **`BACKGROUND_MODE`**（2+1 时推荐 `auto`）
 - 配置输入输出目录
 - 选择解码方向：`both / hor / ver`
-- 调用 `FSADecoder`
+- 调用 `FSADecoder`（内部持有与配置一致的 `PhaseShiftDemodulator`）
 - 选择是否启用低内存模式
 - 选择是否做多峰扫描
 - 选择是否做极线约束校正
-- 选择是否保存和可视化频谱
+- 保存 / 可视化频谱（2+1 时子图标签与四步不同，逻辑兼容）
 
 如果要改参数、跑实验、做批量测试，通常先看这个文件。
 
@@ -752,6 +792,15 @@ PSA / PSM 点云重建脚本。
 6. 看 `initial/` 中早期过程式脚本追溯算法来源
 7. 看点云对齐与误差比较工具准备对照实验
 
+### 路线 D：想理解 2+1 相移与主线集成
+
+1. 本 README 第 3 步（FSA 解码）中的相移表
+2. [FSM_decode_example.py](/E:/code/FSM/FSM_decode_example.py) 配置区 `PHASE_SHIFT_MODE` / `BACKGROUND_MODE`
+3. [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py) 中的 `PhaseShiftDemodulator`
+4. [2plus1_MODE/2plus1替代四步相移说明.md](/E:/code/FSM/2plus1_MODE/2plus1替代四步相移说明.md)
+5. [2plus1_MODE/2plus1_逐像素频谱/decode_ab_test.md](/E:/code/FSM/2plus1_MODE/2plus1_逐像素频谱/decode_ab_test.md)
+6. 需要公式与仿真脉络时再读 [2plus1_MODE/FSM_2plus1/README.md](/E:/code/FSM/2plus1_MODE/FSM_2plus1/README.md)
+
 ---
 
 ## 11. 后续让 AI 分析仓库时的建议切入点
@@ -773,14 +822,19 @@ PSA / PSM 点云重建脚本。
      - [文档/FSM_method_explanation.md](/E:/code/FSM/文档/FSM_method_explanation.md)
      - [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py)
      - [FSM_reconstruct_core.py](/E:/code/FSM/FSM_reconstruct_core.py)
-5. **为论文撰写实验章节**
+5. **分析 2+1 相移替代四步的可行性与实测**
+   - 重点看：
+     - [2plus1_MODE/](/E:/code/FSM/2plus1_MODE/)
+     - [FSM_decode_core.py](/E:/code/FSM/FSM_decode_core.py) 中 `PhaseShiftDemodulator`
+     - [2plus1_MODE/FSM_2plus1/scripts/verify_decode_2plus1.py](/E:/code/FSM/2plus1_MODE/FSM_2plus1/scripts/verify_decode_2plus1.py)
+6. **为论文撰写实验章节**
    - 重点看：
      - `results/`
      - [FSM_visualize.py](/E:/code/FSM/FSM_visualize.py)
      - [点云后续处理/点云对齐工具.py](/E:/code/FSM/点云后续处理/点云对齐工具.py)
      - [点云后续处理/点云误差比较文件.py](/E:/code/FSM/点云后续处理/点云误差比较文件.py)
      - [点云后续处理/点云误差计算原理说明.md](/E:/code/FSM/点云后续处理/点云误差计算原理说明.md)
-6. **写“算法演进 / 改进点”章节**
+7. **写“算法演进 / 改进点”章节**
    - 重点看：
      - [文档/modification_analysis.md](/E:/code/FSM/文档/modification_analysis.md)
      - `initial/` 下早期版本
@@ -820,11 +874,12 @@ PSA / PSM 点云重建脚本。
 - `点云后续处理/点云对齐工具.py`
 - `点云后续处理/点云误差比较文件.py`
 
-### 第三层：历史演进层
+### 第三层：专题研究与历史演进
 
-用于保留算法来源、旧版实现、实验分支和研究过程：
-
-- `initial/`
+- [2plus1_MODE/](/E:/code/FSM/2plus1_MODE/)
+  - 2+1 相移理论纪要、实测图表、独立对比脚本（主线已集成解码，此处保留证据链）。
+- [initial/](/E:/code/FSM/initial/)
+  - 历史实现、实验分支与算法来源档案。
 
 如果以后只想“快速恢复对项目的理解”，先看第一层。
 
@@ -888,6 +943,6 @@ PSA / PSM 点云重建脚本。
 如果以后忘了这个仓库是干什么的，只记住下面这几句话就够了：
 
 1. 这是一个 **频移法结构光三维重建** 仓库。
-2. 当前主线是：**解码 -> 可视化 -> 重建 -> 点云分析**。
-3. 根目录是现行主线，`initial/` 是历史演进与实验档案。
+2. 当前主线是：**解码 -> 可视化 -> 重建 -> 点云分析**；解码默认四步相移，可选 **2+1**（见 `FSM_decode_example.py` 与 `2plus1_MODE/`）。
+3. 根目录是现行运行入口；`2plus1_MODE/` 收纳 2+1 资料与验证；`initial/` 是历史演进档案。
 4. 后续让 AI 分析仓库、函数、算法或写论文，优先先读本 README，再进入主线代码。

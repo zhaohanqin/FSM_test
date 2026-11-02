@@ -15,7 +15,10 @@ FSA (Frequency Shift Analysis) 频移法解码核心模块（重构版）
 为了提高代码的可读性和可维护性，将原有功能细分为以下专门的类：
 
 1. **ImageLoader** - 图像加载器（新增）
-   负责加载条纹图像序列，支持缓存和中文路径
+   负责加载条纹图像序列（四步 4M 或 2+1 原生 2M+1），支持缓存和中文路径
+
+1b. **PhaseShiftDemodulator** - 相移解调（新增）
+   原始图像序列 → (M,H,W) 复数栈；下游 FFT/峰值检测与此解耦
 
 2. **CalibrationReader** - 标定文件读取器（新增，移植自FSM_reconstruct_core.py）
    负责读取标定结果文件，提取极线约束校正所需的参数
@@ -73,7 +76,8 @@ class ImageLoader:
                     image_pattern: str = "{:d}.png",
                     use_cache: bool = True,
                     cache_path: Optional[str] = None,
-                    verify_sequence: bool = False) -> np.ndarray:
+                    verify_sequence: bool = False,
+                    demodulator: Optional["PhaseShiftDemodulator"] = None) -> np.ndarray:
         """
         加载条纹图像序列
 
@@ -82,7 +86,9 @@ class ImageLoader:
         image_dir : str
             图像文件夹路径
         num_frequencies : int
-            频率数量（M），总图像数为 M*4
+            频率数量（M）；总张数由 demodulator 决定（四步 4M 或 2+1 原生 2M+1）
+        demodulator : PhaseShiftDemodulator, optional
+            相移策略；默认四步 4M 布局
         image_pattern : str
             图像文件名模式，默认为 "{:d}.png"
         use_cache : bool
@@ -95,19 +101,34 @@ class ImageLoader:
         Returns:
         --------
         images : np.ndarray
-            图像数组，形状为 (M*4, height, width)
+            图像数组，形状为 (N, height, width)，N 由相移模式决定
         """
+        if demodulator is None:
+            demodulator = PhaseShiftDemodulator()
         if cache_path is None:
-            cache_path = os.path.join(image_dir, "images_cache.npy")
+            cache_path = demodulator.pick_cache_path(image_dir)
 
         if use_cache and os.path.exists(cache_path):
             print(f"从缓存加载图像: {cache_path}")
             images = np.load(cache_path)
+            demodulator.resolve_from_image_count(images.shape[0], num_frequencies)
             print(f"已加载 {images.shape[0]} 张图像，尺寸: {images.shape[1]}x{images.shape[2]}")
+            print(f"  相移: {demodulator.describe()}")
+            if verify_sequence:
+                ImageLoader.verify_image_sequence(
+                    images, num_frequencies, demodulator=demodulator)
             return images
 
         print(f"从文件夹加载图像: {image_dir}")
-        total_images = num_frequencies * 4
+        if demodulator.phase_shift_mode == "two_plus_one" and demodulator.background_mode == "auto":
+            total_images = demodulator.plan_frame_count(
+                num_frequencies, image_dir, image_pattern)
+            print(f"  相移: {demodulator.describe()}")
+        else:
+            total_images = demodulator.expected_frame_count(num_frequencies)
+            if demodulator.background_mode != "auto":
+                demodulator._effective_background_mode = demodulator.background_mode
+            print(f"  相移: {demodulator.describe()}")
         images_list = []
 
         for i in range(total_images):
@@ -143,19 +164,22 @@ class ImageLoader:
         print()
         images = np.array(images_list)
 
+        demodulator.resolve_from_image_count(images.shape[0], num_frequencies)
         if use_cache:
+            cache_path = os.path.join(image_dir, demodulator.default_cache_filename())
             print(f"保存缓存到: {cache_path}")
             np.save(cache_path, images)
 
         print(f"已加载 {images.shape[0]} 张图像，尺寸: {images.shape[1]}x{images.shape[2]}")
 
         if verify_sequence:
-            ImageLoader.verify_image_sequence(images, num_frequencies)
+            ImageLoader.verify_image_sequence(images, num_frequencies, demodulator=demodulator)
 
         return images
 
     @staticmethod
-    def verify_image_sequence(images: np.ndarray, num_frequencies: int, sample_points: int = 5) -> bool:
+    def verify_image_sequence(images: np.ndarray, num_frequencies: int, sample_points: int = 5,
+                              demodulator: Optional["PhaseShiftDemodulator"] = None) -> bool:
         """
         验证图像序列的组织方式是否正确
         """
@@ -163,31 +187,37 @@ class ImageLoader:
         print("验证图像序列组织方式")
         print("="*60)
 
-        if images.shape[0] != num_frequencies * 4:
+        if demodulator is None:
+            demodulator = PhaseShiftDemodulator()
+        try:
+            demodulator.resolve_from_image_count(images.shape[0], num_frequencies)
+        except ValueError as exc:
             print(f"❌ 错误: 图像数量不匹配！")
-            print(f"   期望: {num_frequencies * 4} 张 ({num_frequencies} 频率 × 4 相移)")
-            print(f"   实际: {images.shape[0]} 张")
+            print(f"   {exc}")
             return False
 
-        print(f"[OK] 图像数量正确: {images.shape[0]} 张")
+        print(f"[OK] 图像数量正确: {images.shape[0]} 张 ({demodulator.describe()})")
 
         print(f"\n检查相位图像差异 (采样 {sample_points} 个频率)...")
         sample_freqs = np.linspace(0, num_frequencies-1, min(sample_points, num_frequencies), dtype=int)
 
         has_variation = True
         for freq_idx in sample_freqs:
-            base_idx = freq_idx * 4
-            i0 = images[base_idx + 0].astype(np.float32)
-            i1 = images[base_idx + 1].astype(np.float32)
-            i2 = images[base_idx + 2].astype(np.float32)
-            i3 = images[base_idx + 3].astype(np.float32)
-
-            diff_01 = np.mean(np.abs(i0 - i1))
-            diff_12 = np.mean(np.abs(i1 - i2))
-            diff_23 = np.mean(np.abs(i2 - i3))
-            diff_30 = np.mean(np.abs(i3 - i0))
-
-            avg_diff = (diff_01 + diff_12 + diff_23 + diff_30) / 4
+            if demodulator.uses_four_frame_layout():
+                base_idx = freq_idx * 4
+                i0 = images[base_idx + 0].astype(np.float32)
+                i1 = images[base_idx + 1].astype(np.float32)
+                i2 = images[base_idx + 2].astype(np.float32)
+                i3 = images[base_idx + 3].astype(np.float32)
+                diff_01 = np.mean(np.abs(i0 - i1))
+                diff_12 = np.mean(np.abs(i1 - i2))
+                diff_23 = np.mean(np.abs(i2 - i3))
+                diff_30 = np.mean(np.abs(i3 - i0))
+                avg_diff = (diff_01 + diff_12 + diff_23 + diff_30) / 4
+            else:
+                i0 = images[1 + freq_idx * 2].astype(np.float32)
+                i1 = images[2 + freq_idx * 2].astype(np.float32)
+                avg_diff = np.mean(np.abs(i0 - i1))
 
             print(f"  频率 {freq_idx:3d}: 相位间平均差异 = {avg_diff:.2f}", end="")
 
@@ -325,6 +355,266 @@ class CalibrationReader:
         print(f"  投影仪平移向量: {proj_translation}")
 
         return params
+
+
+def _load_gray_image_file(path: str) -> np.ndarray:
+    """Load a single-channel image (supports Chinese paths)."""
+    try:
+        import cv2
+        buf = np.fromfile(path, dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+    except ImportError:
+        from PIL import Image
+        img = np.array(Image.open(path).convert("L"))
+    if img is None:
+        raise ValueError(f"无法读取图像: {path}")
+    return img.astype(np.float32)
+
+
+class PhaseShiftDemodulator:
+    """
+    相移解调：图像序列 → 形状 (M, H, W) 的复数栈。
+
+    下游 FFT / 峰值检测只消费复数栈，与四步或 2+1 无关。
+
+    2+1 模式两种输入布局（``background_mode`` 为 ``auto`` 时按张数自动识别）：
+
+    - **四步文件夹 (4M)**：与现有一致，``0..3``=频率0 四帧，…；每频率
+      ``A=(I0+I1+I2+I3)/4``，``C=2*((I0-A)+j(A-I1))``。
+    - **原生 2+1 (2M+1)**：``0.png``=全序列共享的平均背景；``1,2``=频率0 的 I0,I1，
+      ``3,4``=频率1，…；``C=2*((I0-A)+j(A-I1))``，``A`` 为第 0 张背景图。
+    """
+
+    VALID_BG = ("auto", "a4_per_frequency", "shared_gray", "white_black")
+
+    def __init__(self,
+                 phase_shift_mode: str = "four_step",
+                 background_mode: str = "a4_per_frequency",
+                 background_image_path: Optional[str] = None,
+                 background_black_path: Optional[str] = None):
+        if phase_shift_mode not in ("four_step", "two_plus_one"):
+            raise ValueError(f"phase_shift_mode 无效: {phase_shift_mode}")
+        if background_mode not in self.VALID_BG:
+            raise ValueError(f"background_mode 无效: {background_mode}")
+        if phase_shift_mode == "four_step":
+            if background_mode not in ("a4_per_frequency", "auto"):
+                background_mode = "a4_per_frequency"
+            elif background_mode == "auto":
+                background_mode = "a4_per_frequency"
+        elif background_mode == "auto":
+            pass  # 加载后按 4M / 2M+1 识别
+        self.phase_shift_mode = phase_shift_mode
+        self.background_mode = background_mode
+        self.background_image_path = background_image_path
+        self.background_black_path = background_black_path
+        self._fixed_background: Optional[np.ndarray] = None
+        self._effective_background_mode: Optional[str] = (
+            None if background_mode == "auto" else background_mode
+        )
+
+    def effective_background_mode(self) -> str:
+        if self._effective_background_mode is not None:
+            return self._effective_background_mode
+        if self.phase_shift_mode == "four_step":
+            return "a4_per_frequency"
+        return self.background_mode
+
+    def resolve_from_image_count(self, n_frames: int, num_frequencies: int) -> str:
+        """根据实际张数确定 2+1 输入布局；四步模式仅接受 4M。"""
+        m = num_frequencies
+        if self.phase_shift_mode == "four_step":
+            if n_frames != m * 4:
+                raise ValueError(
+                    f"四步相移需要 {m * 4} 张图 (4×{m})，实际 {n_frames} 张")
+            self._effective_background_mode = "a4_per_frequency"
+            return self._effective_background_mode
+
+        if self.background_mode != "auto":
+            want = m * 4 if self.background_mode == "a4_per_frequency" else m * 2 + 1
+            if n_frames != want:
+                raise ValueError(
+                    f"2+1 ({self.background_mode}) 需要 {want} 张，实际 {n_frames} 张")
+            self._effective_background_mode = self.background_mode
+            return self._effective_background_mode
+
+        if n_frames == m * 4:
+            self._effective_background_mode = "a4_per_frequency"
+        elif n_frames == m * 2 + 1:
+            self._effective_background_mode = "shared_gray"
+        else:
+            raise ValueError(
+                f"2+1 auto：张数 {n_frames} 无法识别，期望 4M={m * 4}（四步文件夹）"
+                f" 或 2M+1={m * 2 + 1}（0=背景 + 每频2张）")
+        print(f"  [2+1] 已识别输入: {self.describe()}")
+        return self._effective_background_mode
+
+    def describe(self) -> str:
+        if self.phase_shift_mode == "four_step":
+            return "四步相移 (I0-I2)+j(I3-I1)"
+        bg = self.effective_background_mode()
+        if bg == "a4_per_frequency":
+            return "2+1：四步图(4M)，每频率 A=(I0+I1+I2+I3)/4 作背景"
+        if bg == "shared_gray":
+            return "2+1：0.png 共享背景 + 每频率 I0,I1 (2M+1 张)"
+        if bg == "white_black":
+            return "2+1：外部白/黑图合成背景 + 每频率 I0,I1 (2M 张)"
+        return f"2+1 相移，background_mode={self.background_mode}"
+
+    def uses_four_frame_layout(self) -> bool:
+        if self.phase_shift_mode == "four_step":
+            return True
+        return self.effective_background_mode() == "a4_per_frequency"
+
+    def expected_frame_count(self, num_frequencies: int) -> int:
+        if self.phase_shift_mode == "four_step":
+            return num_frequencies * 4
+        if self.background_mode == "a4_per_frequency":
+            return num_frequencies * 4
+        if self.background_mode == "shared_gray":
+            return num_frequencies * 2 + 1
+        if self.background_mode == "white_black":
+            return num_frequencies * 2
+        # auto：加载前未知
+        return num_frequencies * 4
+
+    def plan_frame_count(self, num_frequencies: int, image_dir: str,
+                         image_pattern: str = "{:d}.png") -> int:
+        """从磁盘末帧推断 auto 模式应读取的张数（未命中则抛错）。"""
+        if self.phase_shift_mode != "two_plus_one" or self.background_mode != "auto":
+            n = self.expected_frame_count(num_frequencies)
+            if self.background_mode != "auto":
+                self._effective_background_mode = self.background_mode
+            return n
+        m = num_frequencies
+        last_four = os.path.join(image_dir, image_pattern.format(m * 4 - 1))
+        last_two_step = os.path.join(image_dir, image_pattern.format(m * 2))
+        has4 = os.path.exists(last_four)
+        has21 = os.path.exists(last_two_step)
+        if has4 and not has21:
+            self._effective_background_mode = "a4_per_frequency"
+            return m * 4
+        if has21 and not has4:
+            self._effective_background_mode = "shared_gray"
+            return m * 2 + 1
+        if has4 and has21:
+            raise ValueError(
+                "2+1 auto：目录中同时存在四步末帧与 2M+1 末帧，请显式设置 background_mode")
+        raise FileNotFoundError(
+            f"2+1 auto：未找到完整序列（需要 {last_four} 或 {last_two_step}）")
+
+    def default_cache_filename(self) -> str:
+        if self.phase_shift_mode == "two_plus_one" and not self.uses_four_frame_layout():
+            return "images_cache_2plus1.npy"
+        return "images_cache.npy"
+
+    def pick_cache_path(self, image_dir: str) -> str:
+        """auto 模式下优先选用已存在且张数可识别的缓存。"""
+        if self.background_mode != "auto" or self.phase_shift_mode != "two_plus_one":
+            return os.path.join(image_dir, self.default_cache_filename())
+        c4 = os.path.join(image_dir, "images_cache.npy")
+        c21 = os.path.join(image_dir, "images_cache_2plus1.npy")
+        if os.path.exists(c4):
+            return c4
+        if os.path.exists(c21):
+            return c21
+        return c4
+
+    def _get_fixed_background(self, height: int, width: int) -> np.ndarray:
+        if self._fixed_background is not None:
+            if self._fixed_background.shape != (height, width):
+                raise ValueError("背景图尺寸与条纹图不一致")
+            return self._fixed_background
+        if self.background_mode == "shared_gray":
+            if not self.background_image_path:
+                raise ValueError("shared_gray 需要 background_image_path")
+            self._fixed_background = _load_gray_image_file(self.background_image_path)
+        elif self.background_mode == "white_black":
+            if not self.background_image_path or not self.background_black_path:
+                raise ValueError("white_black 需要 background_image_path 与 background_black_path")
+            w = _load_gray_image_file(self.background_image_path)
+            d = _load_gray_image_file(self.background_black_path)
+            if w.shape != d.shape:
+                raise ValueError("白图与黑图尺寸不一致")
+            self._fixed_background = (w + d) / 2.0
+        else:
+            raise ValueError("固定背景模式未配置路径")
+        if self._fixed_background.shape != (height, width):
+            raise ValueError("背景图尺寸与条纹图不一致")
+        return self._fixed_background
+
+    def _split_frames(self, images: np.ndarray):
+        images_f = (images if images.dtype == np.float32
+                    else images.astype(np.float32))
+        if self.uses_four_frame_layout():
+            i0 = images_f[0::4]
+            i1 = images_f[1::4]
+            i2 = images_f[2::4]
+            i3 = images_f[3::4]
+            return i0, i1, i2, i3, None
+        m = (images_f.shape[0] - 1) // 2
+        gray = images_f[0]
+        i0 = images_f[1::2][:m]
+        i1 = images_f[2::2][:m]
+        return i0, i1, None, None, gray
+
+    def _complex_from_parts(self, i0, i1, i2, i3, gray):
+        if self.phase_shift_mode == "four_step":
+            return (i0 - i2) + 1j * (i3 - i1)
+        if self.effective_background_mode() == "a4_per_frequency":
+            a = (i0 + i1 + i2 + i3) / 4.0
+        else:
+            h, w = i0.shape[1], i0.shape[2]
+            if gray is None:
+                a = self._get_fixed_background(h, w)
+            else:
+                a = gray
+            a = a[np.newaxis, :, :]
+        return 2.0 * ((i0 - a) + 1j * (a - i1))
+
+    def build_complex_stack(self, images: np.ndarray,
+                            num_frequencies: Optional[int] = None) -> np.ndarray:
+        if self._effective_background_mode is None:
+            if num_frequencies is None:
+                raise ValueError(
+                    "2+1/自动布局尚未识别：请先 load_images 或 decode_direction，"
+                    "或在 build_complex_stack 传入 num_frequencies")
+            self.resolve_from_image_count(images.shape[0], num_frequencies)
+        i0, i1, i2, i3, gray = self._split_frames(images)
+        d = self._complex_from_parts(i0, i1, i2, i3, gray)
+        return d.astype(np.complex64, copy=False)
+
+    def build_complex_row(self, images: np.ndarray, row: int,
+                          num_frequencies: Optional[int] = None) -> np.ndarray:
+        sl = images[:, row:row + 1, :]
+        d = self.build_complex_stack(sl, num_frequencies=num_frequencies)
+        return d[:, 0, :]
+
+    def spectrum_components_at(self, images: np.ndarray, y: int, x: int) -> dict:
+        """供频谱诊断：返回 I0,I1,I2,I3,Dc,Ds 等（缺失项为 None）。"""
+        i0, i1, i2, i3, gray = self._split_frames(images)
+        d = self.build_complex_stack(images)[:, y, x]
+        dc = np.real(d).astype(np.float32)
+        ds = np.imag(d).astype(np.float32)
+        out = {
+            "I0": i0[:, y, x].copy(),
+            "I1": i1[:, y, x].copy(),
+            "Dc": dc,
+            "Ds": ds,
+            "phase_shift_mode": self.phase_shift_mode,
+        }
+        if i2 is not None:
+            out["I2"] = i2[:, y, x].copy()
+            out["I3"] = i3[:, y, x].copy()
+        else:
+            out["I2"] = None
+            out["I3"] = None
+        if self.phase_shift_mode == "two_plus_one" and i2 is not None:
+            out["A4"] = ((i0 + i1 + i2 + i3) / 4.0)[:, y, x].copy()
+        elif self.phase_shift_mode == "two_plus_one" and gray is not None:
+            bg = float(gray[y, x])
+            out["A4"] = np.full(i0.shape[0], bg, dtype=np.float32)
+        out["background_layout"] = self.effective_background_mode()
+        return out
 
 
 class DFTProcessor:
@@ -497,7 +787,8 @@ class MultiPeakDetector:
     def get_peaks_for_pixels(images, pixel_coords, direction,
                              proj_height, proj_width,
                              num_frequencies, frequency_step=1.0,
-                             peak_limit=0.5):
+                             peak_limit=0.5,
+                             demodulator: Optional[PhaseShiftDemodulator] = None):
         """
         批量获取指定像素点的所有频谱峰值位置。
 
@@ -530,10 +821,9 @@ class MultiPeakDetector:
         # ★ 使用通用公式（与 FSADecoder._get_fft_params 一致）
         fft_length, valid_length, coord_scale = _calc_fft_params(proj_dim, frequency_step)
 
-        images_f = images.astype(np.float32) if images.dtype != np.float32 else images
-        I0 = images_f[0::4];  I1 = images_f[1::4]
-        I2 = images_f[2::4];  I3 = images_f[3::4]
-        D = (I0 - I2) + 1j * (I3 - I1)
+        if demodulator is None:
+            demodulator = PhaseShiftDemodulator()
+        D = demodulator.build_complex_stack(images, num_frequencies=num_frequencies)
 
         results = []
         for x, y in pixel_coords:
@@ -554,7 +844,8 @@ class MultiPeakDetector:
     def scan_image_for_multi_peaks(images, direction, proj_height, proj_width,
                                    num_frequencies, frequency_step=1.0,
                                    peak_limit=0.5, suppress_radius=30,
-                                   block_size=100, max_report=200):
+                                   block_size=100, max_report=200,
+                                   demodulator: Optional[PhaseShiftDemodulator] = None):
         """
         扫描整幅图像，找出所有存在多峰（多个显著频谱峰值）的像素。
 
@@ -596,11 +887,9 @@ class MultiPeakDetector:
         print(f"  FFT长度: {fft_length}，有效bin范围: 0~{valid_length-1}")
         print(f"  次峰判定阈值: {peak_limit}，主峰抑制半径: ±{suppress_radius} bins")
 
-        images_f = images.astype(np.float32) if images.dtype != np.float32 else images
-        I0 = images_f[0::4];  I1 = images_f[1::4]
-        I2 = images_f[2::4];  I3 = images_f[3::4]
-        D = (I0 - I2) + 1j * (I3 - I1)
-        del I0, I1, I2, I3, images_f
+        if demodulator is None:
+            demodulator = PhaseShiftDemodulator()
+        D = demodulator.build_complex_stack(images, num_frequencies=num_frequencies)
 
         multi_peak_pixels = []
         # ★ freq_indices 基于 valid_length（有效 bin 范围）
@@ -667,7 +956,8 @@ class MultiPeakDetector:
     @staticmethod
     def generate_spectrum_data_for_pixels(images, pixel_coords, direction,
                                           proj_height, proj_width,
-                                          num_frequencies, frequency_step=1.0):
+                                          num_frequencies, frequency_step=1.0,
+                                          demodulator: Optional[PhaseShiftDemodulator] = None):
         """
         为指定像素生成完整的频谱分析数据（与 visualize_spectrum 兼容的格式）。
 
@@ -690,11 +980,9 @@ class MultiPeakDetector:
         # ★ 使用通用公式
         fft_length, valid_length, coord_scale = _calc_fft_params(proj_dim, frequency_step)
 
-        images_f = images.astype(np.float32) if images.dtype != np.float32 else images
-        I0 = images_f[0::4];  I1 = images_f[1::4]
-        I2 = images_f[2::4];  I3 = images_f[3::4]
-        Dc = I0 - I2;  Ds = I3 - I1
-        D  = Dc + 1j * Ds
+        if demodulator is None:
+            demodulator = PhaseShiftDemodulator()
+        D = demodulator.build_complex_stack(images, num_frequencies=num_frequencies)
 
         spectrum_data_dict = {}
 
@@ -711,6 +999,7 @@ class MultiPeakDetector:
             peak_idx   = int(np.argmax(C_magnitude[:valid_length]))
             peak_value = float(C_magnitude[peak_idx] / fft_length)
 
+            comp = demodulator.spectrum_components_at(images, y, x)
             spectrum_data_dict[idx] = {
                 'spectrum':         C_magnitude / fft_length,  # 完整频谱（含无效区域），供可视化
                 'spectrum_raw':     C_magnitude.copy(),
@@ -724,10 +1013,13 @@ class MultiPeakDetector:
                 'valid_length':     valid_length,            # ★ 新增：有效 bin 数量
                 'num_frequencies':  num_frequencies,
                 'frequency_step':   frequency_step,
-                'I0': I0[:, y, x].copy(), 'I1': I1[:, y, x].copy(),
-                'I2': I2[:, y, x].copy(), 'I3': I3[:, y, x].copy(),
-                'Dc': Dc[:, y, x].copy(), 'Ds': Ds[:, y, x].copy(),
+                'phase_shift_mode': comp.get('phase_shift_mode', 'four_step'),
+                'I0': comp['I0'], 'I1': comp['I1'],
+                'I2': comp.get('I2'), 'I3': comp.get('I3'),
+                'Dc': comp['Dc'], 'Ds': comp['Ds'],
             }
+            if 'A4' in comp:
+                spectrum_data_dict[idx]['A4'] = comp['A4']
 
         return spectrum_data_dict
 
@@ -866,20 +1158,34 @@ class FSADecoder:
     """
 
     def __init__(self, projector_width: int, projector_height: int,
-                 frequency_step: float = 1.0):
+                 frequency_step: float = 1.0,
+                 phase_shift_mode: str = "four_step",
+                 background_mode: str = "a4_per_frequency",
+                 background_image_path: Optional[str] = None,
+                 background_black_path: Optional[str] = None):
         """
         Parameters:
         -----------
         projector_width  : int   投影仪宽度（像素）
         projector_height : int   投影仪高度（像素）
         frequency_step   : float 频率步长（Hz），默认 1.0；支持 0.5、0.25 等任意正数值
+        phase_shift_mode : str   "four_step" 或 "two_plus_one"
+        background_mode  : str   2+1 背景：a4_per_frequency | shared_gray | white_black
+        background_image_path / background_black_path : 共享灰或白/黑图路径
         """
         self.proj_width    = projector_width
         self.proj_height   = projector_height
         self.frequency_step = frequency_step
+        self.demodulator = PhaseShiftDemodulator(
+            phase_shift_mode=phase_shift_mode,
+            background_mode=background_mode,
+            background_image_path=background_image_path,
+            background_black_path=background_black_path,
+        )
 
     def verify_image_sequence(self, images, num_frequencies, sample_points=5):
-        return ImageLoader.verify_image_sequence(images, num_frequencies, sample_points)
+        return ImageLoader.verify_image_sequence(
+            images, num_frequencies, sample_points, demodulator=self.demodulator)
 
     def load_images(self, image_dir, num_frequencies,
                     image_pattern="{:d}.png",
@@ -888,7 +1194,8 @@ class FSADecoder:
         return ImageLoader.load_images(
             image_dir=image_dir, num_frequencies=num_frequencies,
             image_pattern=image_pattern, use_cache=use_cache,
-            cache_path=cache_path, verify_sequence=verify_sequence
+            cache_path=cache_path, verify_sequence=verify_sequence,
+            demodulator=self.demodulator,
         )
 
     def _get_fft_params(self, direction: str, num_frequencies: int):
@@ -944,22 +1251,16 @@ class FSADecoder:
             if (row + 1) % 50 == 0 or row == height - 1:
                 print(f"\r  处理进度: {row+1}/{height} 行 ({(row+1)/height*100:.1f}%)", end="")
 
-            I0_row = images[0::4, row, :].astype(np.float32)
-            I1_row = images[1::4, row, :].astype(np.float32)
-            I2_row = images[2::4, row, :].astype(np.float32)
-            I3_row = images[3::4, row, :].astype(np.float32)
-            Dc_row = I0_row - I2_row
-            Ds_row = I3_row - I1_row
-            D_row  = Dc_row + 1j * Ds_row
+            D_row = self.demodulator.build_complex_row(
+                images, row, num_frequencies=num_frequencies)
 
             # 预存本行中频谱分析点的原始数据
             row_sp_data = {}
             for pt_idx, (x, y) in enumerate(spectrum_points_list):
                 if row == y and 0 <= x < width:
+                    comp = self.demodulator.spectrum_components_at(images, y, x)
                     row_sp_data[pt_idx] = {
-                        'I0': I0_row[:, x].copy(), 'I1': I1_row[:, x].copy(),
-                        'I2': I2_row[:, x].copy(), 'I3': I3_row[:, x].copy(),
-                        'Dc': Dc_row[:, x].copy(), 'Ds': Ds_row[:, x].copy(),
+                        **comp,
                         'point': (x, row),
                     }
 
@@ -989,10 +1290,13 @@ class FSADecoder:
                             'valid_length':     valid_length,
                             'num_frequencies':  num_frequencies,
                             'frequency_step':   self.frequency_step,
+                            'phase_shift_mode': pt_data.get('phase_shift_mode', 'four_step'),
                             'I0': pt_data['I0'], 'I1': pt_data['I1'],
-                            'I2': pt_data['I2'], 'I3': pt_data['I3'],
+                            'I2': pt_data.get('I2'), 'I3': pt_data.get('I3'),
                             'Dc': pt_data['Dc'], 'Ds': pt_data['Ds'],
                         }
+                        if 'A4' in pt_data:
+                            spectrum_data[pt_idx]['A4'] = pt_data['A4']
                         print(f"\n\n  ⚡ [频谱分析] 点{pt_idx+1} ({col},{row}) 已保存，"
                               f"FFT={fft_length}，有效={valid_length}，"
                               f"峰值位置={peak_idx}，强度={peak_value:.4f}")
@@ -1057,11 +1361,12 @@ class FSADecoder:
         peak         : np.ndarray  峰值强度图（置信度）
         spectrum_data : dict|None  频谱分析数据
         """
+        self.demodulator.resolve_from_image_count(images.shape[0], num_frequencies)
         fft_length, coord_scale, proj_dim, valid_length = self._get_fft_params(direction, num_frequencies)
 
         print(f"\n{'='*60}")
         print(f"开始解码 {direction} 方向 (投影仪{'行' if direction == 'hor' else '列'}坐标)")
-        print(f"图像数量: {images.shape[0]} ({num_frequencies} 频率 × 4 相移)")
+        print(f"图像数量: {images.shape[0]} ({self.demodulator.describe()})")
         print(f"图像尺寸: {images.shape[1]} × {images.shape[2]}")
         print(f"投影仪{'高度' if direction == 'hor' else '宽度'}: {proj_dim}")
         print(f"频率步长: {self.frequency_step}")
@@ -1082,24 +1387,9 @@ class FSADecoder:
             )
 
         # ---------- 标准分块模式 ----------
-        print("\n步骤1: 提取四步相移图像序列...")
-        I0 = images[0::4].astype(np.float32)
-        I1 = images[1::4].astype(np.float32)
-        I2 = images[2::4].astype(np.float32)
-        I3 = images[3::4].astype(np.float32)
-        print(f"  I0~I3 形状: {I0.shape}")
-        del images
+        print(f"\n步骤1-2: 相移解调 → 复数栈 D ({self.demodulator.describe()})...")
 
-        print("\n步骤2: 构造复数信号 D = (I0-I2) + j*(I3-I1)...")
-        Dc = I0 - I2;  Ds = I3 - I1
-        D  = Dc + 1j * Ds
-        print(f"  D 形状: {D.shape}, 类型: {D.dtype}")
-
-        if debug_point is not None:
-            x, y = debug_point
-            print(f"\n  [调试] 点({x},{y}): I0均值={I0[:,y,x].mean():.2f}, Dc均值={Dc[:,y,x].mean():.2f}")
-
-        # 保存频谱分析点原始数据
+        # 保存频谱分析点原始数据（需在释放 images 前提取）
         spectrum_raw_data = {}
         if spectrum_points is not None:
             if (isinstance(spectrum_points, tuple) and len(spectrum_points) == 2
@@ -1108,20 +1398,23 @@ class FSADecoder:
             else:
                 spectrum_points_list = list(spectrum_points)
             for pt_idx, (x, y) in enumerate(spectrum_points_list):
-                if 0 <= x < D.shape[2] and 0 <= y < D.shape[1]:
-                    spectrum_raw_data[pt_idx] = {
-                        'I0': I0[:,y,x].copy(), 'I1': I1[:,y,x].copy(),
-                        'I2': I2[:,y,x].copy(), 'I3': I3[:,y,x].copy(),
-                        'Dc': Dc[:,y,x].copy(), 'Ds': Ds[:,y,x].copy(),
-                        'point': (x, y),
-                    }
+                if 0 <= x < images.shape[2] and 0 <= y < images.shape[1]:
+                    comp = self.demodulator.spectrum_components_at(images, y, x)
+                    spectrum_raw_data[pt_idx] = {**comp, 'point': (x, y)}
                     print(f"  [OK] 已保存频谱分析点{pt_idx+1} ({x},{y}) 的原始数据")
                 else:
                     print(f"  ⚠ 频谱分析点{pt_idx+1} ({x},{y}) 超出图像范围")
         else:
             spectrum_points_list = []
 
-        del I0, I1, I2, I3, Dc, Ds
+        D = self.demodulator.build_complex_stack(images)
+        print(f"  D 形状: {D.shape}, 类型: {D.dtype}")
+        del images
+
+        if debug_point is not None:
+            x, y = debug_point
+            print(f"\n  [调试] 点({x},{y}): |D|均值={np.abs(D[:,y,x]).mean():.2f}, "
+                  f"Re(D)均值={np.real(D[:,y,x]).mean():.2f}")
 
         disparity     = np.empty(D.shape[1:], dtype=np.float32)
         peak          = np.empty(D.shape[1:], dtype=np.float32)
@@ -1197,10 +1490,13 @@ class FSADecoder:
                                 'valid_length':     valid_length,
                                 'num_frequencies':  num_frequencies,
                                 'frequency_step':   self.frequency_step,
+                                'phase_shift_mode': raw_data.get('phase_shift_mode', 'four_step'),
                                 'I0': raw_data['I0'], 'I1': raw_data['I1'],
-                                'I2': raw_data['I2'], 'I3': raw_data['I3'],
+                                'I2': raw_data.get('I2'), 'I3': raw_data.get('I3'),
                                 'Dc': raw_data['Dc'], 'Ds': raw_data['Ds'],
                             }
+                            if 'A4' in raw_data:
+                                spectrum_data[pt_idx]['A4'] = raw_data['A4']
                             print(f"\n\n  ⚡ [频谱分析] 点{pt_idx+1} ({x},{y}) 已保存，"
                                   f"峰值位置={int(disparity[y,x])}，强度={peak[y,x]:.4f}")
                             top10 = np.argsort(C_val_pt)[-10:][::-1]

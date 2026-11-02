@@ -1,0 +1,5 @@
+pixel (1500, 700)
+four-step peak index 1399  value 4.859081  coord 1398.999268
+2+1 peak index 1399  value 4.855535  coord 1398.999390
+abs column error 0.000122
+valid peak>=1.5: True

@@ -1,0 +1,5 @@
+pixel (1100, 1100)
+four-step peak index 1125  value 1.918553  coord 1125.001709
+2+1 peak index 1125  value 1.916425  coord 1125.001465
+abs column error 0.000244
+valid peak>=1.5: True

@@ -23,10 +23,15 @@ FSA解码使用示例
 
   其他步长（如 0.25）：通用公式 fft_length = proj_dim/step 自动处理
 
-图像序列组织方式（以4步相移为例）：
-  0.png~3.png   → 频率0   的 (0°, 90°, 180°, 270°)
-  4.png~7.png   → 频率1*s 的 (0°, 90°, 180°, 270°)
-  ...（s = FREQUENCY_STEP）
+图像序列组织方式：
+
+  四步相移 (PHASE_SHIFT_MODE="four_step")：
+    0.png~3.png   → 频率0 的 (0°, 90°, 180°, 270°)
+    4.png~7.png   → 频率1 的四帧，… 共 4×M 张
+
+  2+1 相移 (PHASE_SHIFT_MODE="two_plus_one")，BACKGROUND_MODE 推荐 "auto"：
+    A) 输入仍是四步文件夹 (4M)：每频率用四帧平均 A=(I0+I1+I2+I3)/4 作背景，再 2+1 解调
+    B) 原生 2+1 (2M+1)：0.png=共享平均背景；1,2=频率0 的 I0,I1；3,4=频率1；…
 """
 
 import numpy as np
@@ -61,7 +66,11 @@ def save_spectrum_data(spectrum_data, output_dir, direction, spectrum_points):
 def decode_fsa_images(projector_width, projector_height, num_frequencies, decode_direction,
                       image_dir_hor, image_dir_ver, output_dir, block_size, use_cache,
                       verify_sequence, low_memory_mode, spectrum_points, frequency_step=1.0,
-                      multi_peak_scan=False, multi_peak_scan_limit=0.5):
+                      multi_peak_scan=False, multi_peak_scan_limit=0.5,
+                      phase_shift_mode="four_step",
+                      background_mode="a4_per_frequency",
+                      background_image_path=None,
+                      background_black_path=None):
     """
     使用FSADecoder解码实际采集的图像。
 
@@ -95,7 +104,19 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     print("="*80)
     print(f"投影仪分辨率: {projector_width} × {projector_height}")
     print(f"采集频率数: {num_frequencies}，频率步长: {frequency_step} Hz")
-    print(f"最高频率: {(num_frequencies-1)*frequency_step} Hz，总图像数: {num_frequencies*4}")
+    from FSM_decode_core import PhaseShiftDemodulator
+    demod_preview = PhaseShiftDemodulator(
+        phase_shift_mode=phase_shift_mode,
+        background_mode=background_mode,
+        background_image_path=background_image_path,
+        background_black_path=background_black_path,
+    )
+    if phase_shift_mode == "two_plus_one" and background_mode == "auto":
+        print(f"最高频率: {(num_frequencies-1)*frequency_step} Hz，总图像数: 加载后自动识别 (4M 或 2M+1)")
+    else:
+        n_frames = demod_preview.expected_frame_count(num_frequencies)
+        print(f"最高频率: {(num_frequencies-1)*frequency_step} Hz，总图像数: {n_frames}")
+    print(f"相移模式: {demod_preview.describe()}")
     print(f"解码方向: {decode_direction.upper()}")
 
     # ★ 显示通用公式计算出的FFT参数
@@ -117,7 +138,14 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
     print("="*80)
 
     os.makedirs(output_dir, exist_ok=True)
-    decoder     = FSADecoder(projector_width, projector_height, frequency_step)
+    decoder     = FSADecoder(
+        projector_width, projector_height, frequency_step,
+        phase_shift_mode=phase_shift_mode,
+        background_mode=background_mode,
+        background_image_path=background_image_path,
+        background_black_path=background_black_path,
+    )
+    demod = decoder.demodulator
     images_cache = {}
     spectrum_data_list = []
 
@@ -211,7 +239,8 @@ def decode_fsa_images(projector_width, projector_height, num_frequencies, decode
                 images=images_cache[dir_key], direction=dir_key,
                 proj_height=projector_height, proj_width=projector_width,
                 num_frequencies=num_frequencies, frequency_step=frequency_step,
-                peak_limit=multi_peak_scan_limit
+                peak_limit=multi_peak_scan_limit,
+                demodulator=demod,
             )
             if mp_pixels:
                 print(f"\n  {dir_key.upper()}方向 多峰像素 TOP20:")
@@ -383,20 +412,30 @@ def visualize_spectrum(spectrum_data: dict, save_path: str = None):
     s_idx     = top20_idx[sord];  s_val = top20_val[sord]
     s_max_pos = np.where(s_idx == top20_idx[0])[0][0]
 
+    psm = spectrum_data.get('phase_shift_mode', 'four_step')
+
     def sp1(ax):
-        for I, lbl, mk in [(spectrum_data['I0'],'I0(0°)','o-'),
-                            (spectrum_data['I1'],'I1(90°)','s-'),
-                            (spectrum_data['I2'],'I2(180°)','^-'),
-                            (spectrum_data['I3'],'I3(270°)','d-')]:
-            ax.plot(freq_axis, I, mk, label=lbl, lw=1.5, ms=3)
+        ax.plot(freq_axis, spectrum_data['I0'], 'o-', label='I0', lw=1.5, ms=3)
+        ax.plot(freq_axis, spectrum_data['I1'], 's-', label='I1', lw=1.5, ms=3)
+        if psm == 'four_step' and spectrum_data.get('I2') is not None:
+            ax.plot(freq_axis, spectrum_data['I2'], '^-', label='I2', lw=1.5, ms=3)
+            ax.plot(freq_axis, spectrum_data['I3'], 'd-', label='I3', lw=1.5, ms=3)
+        elif spectrum_data.get('A4') is not None:
+            ax.plot(freq_axis, spectrum_data['A4'], '--', color='gray', label='背景 A', lw=1.5)
         ax.set(xlabel='频率(Hz)', ylabel='强度',
-               title=f'1. 原始强度序列\n(M={M}，步长={frequency_step}Hz)')
+               title=f'1. 原始强度序列\n(M={M}，步长={frequency_step}Hz，{psm})')
         ax.legend(); ax.grid(alpha=0.3)
 
     def sp2(ax):
-        ax.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc=I0-I2', lw=1.5, ms=3)
-        ax.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds=I3-I1', lw=1.5, ms=3)
-        ax.set(xlabel='频率(Hz)', ylabel='差分值', title='2. 差分信号')
+        if psm == 'two_plus_one':
+            ax.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Re: 2(I0-A)', lw=1.5, ms=3)
+            ax.plot(freq_axis, spectrum_data['Ds'], 's-', label='Im: 2(A-I1)', lw=1.5, ms=3)
+            ttl = '2. 2+1 差分信号'
+        else:
+            ax.plot(freq_axis, spectrum_data['Dc'], 'o-', label='Dc=I0-I2', lw=1.5, ms=3)
+            ax.plot(freq_axis, spectrum_data['Ds'], 's-', label='Ds=I3-I1', lw=1.5, ms=3)
+            ttl = '2. 四步差分信号'
+        ax.set(xlabel='频率(Hz)', ylabel='差分值', title=ttl)
         ax.legend(); ax.grid(alpha=0.3)
 
     def sp3(ax):
@@ -554,8 +593,9 @@ def main():
     PROJECTOR_HEIGHT = 1080
 
     # ---------- 2. FSA采集参数 ----------
-    NUM_FREQUENCIES = 301   # 频率数量 M
-    FREQUENCY_STEP  = 0.5   # 频率步长（Hz）
+    # 03_bookshelf_white_cycle1 / FSM_vertical_f0_f150：0.png–603.png，151×4
+    NUM_FREQUENCIES = 151   # 频率数量 M（频率 0…150）
+    FREQUENCY_STEP  = 1.0   # 频率步长（Hz）
     #
     # ★★★ FREQUENCY_STEP 说明 ★★★
     #
@@ -574,12 +614,22 @@ def main():
     #     FREQUENCY_STEP  = 0.5
 
     # ---------- 3. 解码方向 ----------
-    DECODE_DIRECTION = "both"   # "both" / "ver" / "hor"
+    DECODE_DIRECTION = "ver"    # 本次只解码垂直条纹
 
     # ---------- 4. 路径配置 ----------
     IMAGE_DIR_HOR = r"H:\images\before_2025_12_27\images_FSM\place1\04_bookshelf_white_cycle0_5\FSM_horizontal_f0_f150"
-    IMAGE_DIR_VER = r"H:\images\before_2025_12_27\images_FSM\place1\04_bookshelf_white_cycle0_5\FSM_vertical_f0_f150"
+    IMAGE_DIR_VER = r"E:\images\before_2026_5_23\before_2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_vertical_f0_f150"
     OUTPUT_DIR    = r"results\fsa_decode"
+
+    # ---------- 4.5 相移模式 ----------
+    PHASE_SHIFT_MODE = "four_step"          # "four_step" | "two_plus_one"
+    # 2+1 时：
+    #   "auto" — 推荐：604 张→按四步(4M)读入并每频合成 A4；303 张→0.png 背景 + 每频 2 张
+    #   "a4_per_frequency" — 强制四步文件夹 4M
+    #   "shared_gray" — 强制 2M+1（0=背景，勿与外部 BACKGROUND_IMAGE 混用）
+    BACKGROUND_MODE  = "auto"
+    BACKGROUND_IMAGE = None                 # 仅 white_black：白图路径
+    BACKGROUND_BLACK = None                 # 仅 white_black：黑图路径
 
     # ---------- 5. 处理参数 ----------
     BLOCK_SIZE      = 100
@@ -624,7 +674,11 @@ def main():
         spectrum_points=SPECTRUM_POINTS,
         frequency_step=FREQUENCY_STEP,
         multi_peak_scan=ENABLE_MULTI_PEAK_SCAN,
-        multi_peak_scan_limit=MULTI_PEAK_SCAN_LIMIT
+        multi_peak_scan_limit=MULTI_PEAK_SCAN_LIMIT,
+        phase_shift_mode=PHASE_SHIFT_MODE,
+        background_mode=BACKGROUND_MODE,
+        background_image_path=BACKGROUND_IMAGE,
+        background_black_path=BACKGROUND_BLACK,
     )
 
     if ENABLE_EPIPOLAR_CORRECTION and output_dir is not None:

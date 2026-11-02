@@ -1,0 +1,5 @@
+pixel (900, 400)
+four-step peak index 740  value 6.275979  coord 740.003052
+2+1 peak index 740  value 6.265231  coord 740.002930
+abs column error 0.000122
+valid peak>=1.5: True

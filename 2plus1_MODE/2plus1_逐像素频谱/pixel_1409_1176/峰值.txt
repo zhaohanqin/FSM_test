@@ -1,0 +1,5 @@
+pixel (1409, 1176)
+four-step peak index 1423  value 18.403988  coord 1422.996582
+2+1 peak index 1422  value 18.393642  coord 1422.003296
+abs column error 0.993286
+valid peak>=1.5: True
