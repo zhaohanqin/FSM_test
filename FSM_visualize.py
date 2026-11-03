@@ -512,9 +512,9 @@ def main():
     # ========================================================================
     
     # -------------------- 1. 路径配置 --------------------
-    BASE_DIR = r"H:\code\FSM"                                    # 基础目录
-    RESULT_DIR = os.path.join(BASE_DIR, "results", "fsa_decode")   # 解码结果目录
-    OUTPUT_DIR = os.path.join(BASE_DIR, "results", "visualizations") # 可视化输出目录
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    RESULT_DIR = os.path.join(BASE_DIR, "results", "fsa_decode_2plus1_bookshelf")
+    OUTPUT_DIR = os.path.join(BASE_DIR, "results", "visualizations_2plus1_bookshelf")
     
     # -------------------- 2. 峰值阈值设置 --------------------
     # 🔥 统一峰值阈值 - 修改这一个参数，就可以改变所有可视化的阈值！
@@ -528,7 +528,7 @@ def main():
     # ★ 需要与解码时使用的参数一致
     PROJECTOR_WIDTH = 1920     # 投影仪宽度（像素）
     PROJECTOR_HEIGHT = 1080    # 投影仪高度（像素）
-    FREQUENCY_STEP = 0.5       # 频率步长（需与解码时一致）
+    FREQUENCY_STEP = 1.0       # 频率步长（需与解码时一致）
                                # ★ 1.0（标准）：FFT长度=投影仪分辨率，有效bin=全部
                                # ★ 0.5（新增）：FFT长度=2×投影仪分辨率，有效bin=[0,proj_dim-1]
                                # ★ 通用公式：FFT长度 = int(round(proj_dim / frequency_step))

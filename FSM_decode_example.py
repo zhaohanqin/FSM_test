@@ -614,20 +614,21 @@ def main():
     #     FREQUENCY_STEP  = 0.5
 
     # ---------- 3. 解码方向 ----------
-    DECODE_DIRECTION = "ver"    # 本次只解码垂直条纹
+    DECODE_DIRECTION = "both"   # 重建需要 hor + ver
 
     # ---------- 4. 路径配置 ----------
-    IMAGE_DIR_HOR = r"H:\images\before_2025_12_27\images_FSM\place1\04_bookshelf_white_cycle0_5\FSM_horizontal_f0_f150"
-    IMAGE_DIR_VER = r"E:\images\before_2026_5_23\before_2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_vertical_f0_f150"
-    OUTPUT_DIR    = r"results\fsa_decode"
+    _BOOK = r"E:\images\before_2026_5_23\before_2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1"
+    IMAGE_DIR_HOR = _BOOK + r"\FSM_horizontal_f0_f150_2plus1"
+    IMAGE_DIR_VER = _BOOK + r"\FSM_vertical_f0_f150_2plus1"
+    OUTPUT_DIR    = r"results\fsa_decode_2plus1_bookshelf"
 
     # ---------- 4.5 相移模式 ----------
-    PHASE_SHIFT_MODE = "four_step"          # "four_step" | "two_plus_one"
+    PHASE_SHIFT_MODE = "two_plus_one"       # "four_step" | "two_plus_one"
     # 2+1 时：
     #   "auto" — 推荐：604 张→按四步(4M)读入并每频合成 A4；303 张→0.png 背景 + 每频 2 张
     #   "a4_per_frequency" — 强制四步文件夹 4M
     #   "shared_gray" — 强制 2M+1（0=背景，勿与外部 BACKGROUND_IMAGE 混用）
-    BACKGROUND_MODE  = "auto"
+    BACKGROUND_MODE  = "shared_gray"        # 303 张：0=背景，其后每频 I0,I1
     BACKGROUND_IMAGE = None                 # 仅 white_black：白图路径
     BACKGROUND_BLACK = None                 # 仅 white_black：黑图路径
 
@@ -642,7 +643,7 @@ def main():
     #   内存不足时可减小 BLOCK_SIZE 或设 LOW_MEMORY_MODE=True
 
     # ---------- 7. 频谱分析点 ----------
-    SPECTRUM_POINTS = (1200, 1000)   # 单点：(x,y)；多点：[(x1,y1),(x2,y2),...]
+    SPECTRUM_POINTS = None           # 全量解码时可 None；单点示例 (1200, 1000)
 
     # ---------- 7.5 多峰像素扫描（可选） ----------
     ENABLE_MULTI_PEAK_SCAN = False

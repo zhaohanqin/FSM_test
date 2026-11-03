@@ -30,7 +30,7 @@ if __name__ == "__main__":
     # ========================================================================
     
     # -------------------- 1. 标定文件路径 --------------------
-    CALIBRATION_FILE = "标定结果2.txt"  # 相机-投影仪标定结果文件
+    CALIBRATION_FILE = "标定结果_place1.txt"  # place1 书架采集对应标定
     
     # -------------------- 2. 相机参数 --------------------
     CAMERA_IMAGE_SIZE = (2448, 2048)   # 相机图像尺寸 (宽, 高)
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     
     # -------------------- 4. FSA解码参数（需与解码时一致）--------------------
     # ★ 以下两个参数必须与 FSM_decode_example.py 中的设置保持严格一致
-    FREQUENCY_STEP = 0.5               # 频率步长（Hz），与解码时一致
+    FREQUENCY_STEP = 1.0               # 频率步长（Hz），与解码时一致
                                        #
                                        # ★★★ FREQUENCY_STEP 说明 ★★★
                                        #
@@ -60,18 +60,18 @@ if __name__ == "__main__":
                                        #   fft_length = proj_dim / FREQUENCY_STEP
                                        #   补偿因子   = fft_length / NUM_FREQUENCIES
                                        #
-    NUM_FREQUENCIES = 301              # 采集的频率数量（M值），与解码时一致
+    NUM_FREQUENCIES = 151              # 采集的频率数量（M值），与解码时一致
                                        # ★ 必须提供此参数以启用精确峰值补偿
                                        #   - FREQUENCY_STEP=1.0 时：设为 151
                                        #   - FREQUENCY_STEP=0.5 时：设为 301
                                        #   补偿因子 = int(round(proj_dim/FREQUENCY_STEP)) / NUM_FREQUENCIES
     
     # -------------------- 5. 数据路径配置 --------------------
-    RESULT_DIR = "results/fsa_decode"  # 存放解码结果的文件夹
+    RESULT_DIR = "results/fsa_decode_2plus1_bookshelf"
     
     # -------------------- 6. 重建参数 --------------------
     OVERSAMPLE = 4                     # 过采样倍数（与解码时一致）
-    PEAK_LIMIT = 0.8                   # 峰值阈值（范围：0-1）
+    PEAK_LIMIT = 8.0                   # 2+1+place1 建议 8；四步 decode 可试 0.8~1.5
                                        # 说明：越大过滤越严格，建议值：
                                        #   - 0.5: 包含中等质量以上的点
                                        #   - 0.8: 只保留高质量的点（推荐）
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # 
     # 示例：
     #   WHITE_IMAGE_PATH = "white_light.png"           # 使用白光图像的颜色
-    WHITE_IMAGE_PATH = r"E:\images\before_2026_5_23\before_2025_12_27\images_FSM\place1\04_bookshelf_white_cycle0_5\FSM_horizontal_f0_f150\4.png"       # 使用绝对路径
+    WHITE_IMAGE_PATH = r"E:\images\before_2026_5_23\before_2025_12_27\images_FSM\place1\03_bookshelf_white_cycle1\FSM_vertical_f0_f150_2plus1\0.png"
     #   WHITE_IMAGE_PATH = None                        # 不使用颜色，点云为灰色
     #
     # WHITE_IMAGE_PATH = None            # 设为None则点云使用默认灰色
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     PEAK_VER_FILE = os.path.join(RESULT_DIR, "peak_ver.npy")
     
     # -------------------- 9. 输出文件路径 --------------------
-    OUTPUT_PLY = "results/pointcloud_fsa.ply"  # 输出点云文件名
+    OUTPUT_PLY = "results/pointcloud_fsa_2plus1_place1.ply"
     
     # ========================================================================
     # ✅ 配置参数区域结束 - 下方为程序执行代码，一般不需要修改
